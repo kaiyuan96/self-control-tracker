@@ -1,0 +1,15 @@
+# 部署产物
+dist/
+.wrangler/
+
+# 依赖
+node_modules/
+
+# 日志与系统文件
+*.log
+.DS_Store
+Thumbs.db
+
+# 部署配置（本地保留，不公开）
+wrangler.toml
+worker/
