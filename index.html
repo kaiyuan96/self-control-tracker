@@ -58,6 +58,15 @@
           <div class="tip-body" id="tipBody"></div>
         </div>
 
+        <div class="tip card" id="planCard" style="display:none">
+          <div class="tip-title">🛡️ 预案库 <span class="ai-meta">如果-那么 · 提前决策</span></div>
+          <div id="planList"></div>
+          <div class="plan-actions">
+            <button class="chip-btn" id="btnNewPlan">＋新建预案</button>
+            <button class="chip-btn" id="btnAiPlan">✨ AI 推荐</button>
+          </div>
+        </div>
+
         <div class="tip card ai-card" id="aiCard" style="display:none">
           <div class="tip-title">🤖 AI 分析师 <span class="ai-meta" id="aiMeta"></span></div>
           <div class="ai-body" id="aiBody"></div>
@@ -262,13 +271,56 @@
     </div>
   </div>
 
+  <!-- ======== 预案编辑弹窗 ======== -->
+  <div class="modal-mask hidden" id="planModal">
+    <div class="modal">
+      <button class="modal-close" id="btnPlanClose" aria-label="关闭">✕</button>
+      <div class="modal-title">🛡️ 预案卡</div>
+      <label class="field">
+        <span>如果…（什么情境下冲动容易出现？含时间/地点/状态）</span>
+        <input type="text" id="planIf" maxlength="60" placeholder="例：凌晨睡不着、一个人躺着刷手机">
+      </label>
+      <div class="chips" id="planActionChips"></div>
+      <label class="field">
+        <span>那么我就…（10 秒内能开始的具体动作）</span>
+        <textarea id="planThen" rows="3" maxlength="100" placeholder="点上方动作标签快速填入，也可以自己写"></textarea>
+      </label>
+      <div class="modal-actions">
+        <button class="btn-primary" id="btnPlanSave">保存预案</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======== AI 预案候选弹窗 ======== -->
+  <div class="modal-mask hidden" id="planSuggestModal">
+    <div class="modal">
+      <button class="modal-close" id="btnPlanSuggestClose" aria-label="关闭">✕</button>
+      <div class="modal-title">✨ AI 为你推荐的预案</div>
+      <div class="modal-sub">基于你的历史诱因和高危时段生成，点击采用即可保存</div>
+      <div id="planSuggestList"></div>
+    </div>
+  </div>
+
+  <!-- ======== 破戒预案复盘弹窗 ======== -->
+  <div class="modal-mask hidden" id="reviewModal">
+    <div class="modal">
+      <div class="modal-title">🛡️ 预案复盘</div>
+      <div class="modal-sub">刚才的破戒和你的预案有关吗？如实记录，预案会越来越准</div>
+      <div id="reviewPlanList"></div>
+      <div class="modal-actions">
+        <button class="chip-btn" id="btnReviewSkip">跳过，与预案无关</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ======== 心情日记弹窗 ======== -->
   <div class="modal-mask hidden" id="diaryModal">
     <div class="modal">
+      <button class="modal-close" id="btnDiaryClose" aria-label="关闭">✕</button>
       <div class="modal-title">📝 心情日记</div>
       <label class="field">
-        <span>日期</span>
-        <input type="date" id="diaryDate">
+        <span>时间（精确到分，AI 会据此判断与记录的先后关系）</span>
+        <input type="datetime-local" id="diaryTime">
       </label>
       <div class="chips" id="diaryMoods"></div>
       <textarea id="diaryContent" rows="7" maxlength="2000"

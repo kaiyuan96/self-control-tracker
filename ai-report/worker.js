@@ -27,7 +27,7 @@ function ensureSchema(env) {
       .prepare(
         'CREATE TABLE IF NOT EXISTS accounts (' +
         'code TEXT PRIMARY KEY, goal TEXT, relapses TEXT, deleted TEXT, updated_at INTEGER, ' +
-        'ai_report TEXT, ai_report_week TEXT, diaries TEXT)'
+        'ai_report TEXT, ai_report_week TEXT, diaries TEXT, plans TEXT)'
       )
       .run()
       .then(() => true)
@@ -99,7 +99,7 @@ function buildHistorySummary(allRecords) {
   ].join('\n');
 }
 
-function buildPrompt(goal, weekRecords, range, allRecords, weekDiaries) {
+function buildPrompt(goal, weekRecords, range, allRecords, weekDiaries, userPlans) {
   const lines = [
     '你是一位温暖、专业的自律习惯教练。用户在使用一款「禁欲打卡」应用（帮助戒除不良习惯、坚持自律生活）。',
     '',
@@ -113,13 +113,17 @@ function buildPrompt(goal, weekRecords, range, allRecords, weekDiaries) {
     '',
     '== 第三部分：上一周的日记原文 ==',
     weekDiaries.length ? JSON.stringify(weekDiaries) : '（上周未写日记）',
-    '字段说明：date=日期，mood=当天心情标记(😊开心 🙂不错 😐一般 😞低落 😫疲惫 😡烦躁)，content=用户亲笔写下的当日心情与经历。',
+    '字段说明：time=记录时间（北京时间 YYYY-MM-DD HH:mm，精确到分），mood=当天心情标记(😊开心 🙂不错 😐一般 😞低落 😫疲惫 😡烦躁)，content=用户亲笔写下的当日心情与经历。',
     '',
-    '请结合长期摘要、本周明细与日记原文，输出一份中文周报，严格使用以下结构：',
+    '== 第四部分：用户的"如果-那么"预案卡及使用情况 ==',
+    (userPlans && userPlans.length) ? JSON.stringify(userPlans) : '（用户还没有建立任何预案）',
+    '字段说明：if=触发情境，then=预定动作，missed=破戒时没执行该预案的次数，used=执行了但未拦住的次数。',
+    '',
+    '请结合长期摘要、本周明细、日记原文与预案使用情况，输出一份中文周报，严格使用以下结构：',
     '【本周概览】2-3 句话总结次数与趋势',
-    '【模式洞察】时段规律、诱因关联；请把日记里的情绪线索与破戒记录相互印证（例如日记里连续的低落是否先于破戒出现）；如备注或日记里有情绪描述，请具体回应它',
+    '【模式洞察】时段规律、诱因关联；请把日记里的情绪线索与破戒记录相互印证——注意对比每篇日记的记录时间与破戒发生时间的先后顺序：日记先于破戒出现说明该情绪可能是前兆信号，破戒之后才写的日记则更多是事后感受与反思；如备注或日记里有情绪描述，请具体回应它',
     '【长期观察】结合全历史数据指出进步、恶化或反复的轨迹（如无可略写）',
-    '【下周建议】3 条具体可执行的小行动，每条一行，以 · 开头',
+    '【下周建议】3 条具体可执行的小行动，每条一行，以 · 开头；若用户已有预案，请结合 missed/used 数据评估哪张需要修改；若没有预案，第 1 条建议改为引导建立第一张兜底预案（离开现场+等待10分钟）',
     '',
     '要求：语气像理解他的朋友，不说教不评判；总长不超过 450 字；直接输出内容，不要寒暄。'
   ];
@@ -170,12 +174,22 @@ async function generateReportForAccount(env, code) {
   const mapped = all.map(r => ({ time: r.time, triggers: r.triggers || [], severity: r.severity || 0, note: r.note || '' }));
 
   const weekDiaries = allDiaries
-    .map(d => ({ date: d.date, mood: d.mood || '', content: (d.content || '').slice(0, 500) }))
-    .filter(d => { const t = new Date(d.date + 'T12:00:00+08:00').getTime(); return t >= range.start && t < range.end; })
-    .sort((a, b) => a.date < b.date ? -1 : 1);
+    .map(d => {
+      /* 兼容旧格式（仅 date）→ 归一化为北京时间 time 字符串 */
+      const t = d.time || (d.date ? d.date + ' 12:00' : '');
+      return { time: t, mood: d.mood || '', content: (d.content || '').slice(0, 500) };
+    })
+    .filter(d => d.time)
+    .map(d => ({ ...d, _ts: new Date(d.time.replace(' ', 'T') + '+08:00').getTime() }))
+    .filter(d => { const t = d._ts; return t >= range.start && t < range.end; })
+    .sort((a, b) => a.time < b.time ? -1 : 1)
+    .map(({ _ts, ...d }) => d);
 
   /* 上周零记录：也生成一份简短鼓励报告 */
-  const content = await callDeepSeek(env, buildPrompt(goal, weekRecords, range, mapped, weekDiaries));
+  let userPlans = [];
+  try { userPlans = JSON.parse(row.plans || '[]'); } catch (e) {}
+  const planData = userPlans.map(p => ({ if: p.ifText, then: p.thenText, missed: p.missed || 0, used: p.used || 0 }));
+  const content = await callDeepSeek(env, buildPrompt(goal, weekRecords, range, mapped, weekDiaries, planData));
 
   await env.abstinence_db
     .prepare('UPDATE accounts SET ai_report = ?, ai_report_week = ? WHERE code = ?')
@@ -198,14 +212,75 @@ async function runWeeklyReports(env) {
   }
 }
 
+/* AI 预案推荐：基于账号历史诱因/时段生成 3 条 if-then 预案候选 */
+async function suggestPlansForAccount(env, code) {
+  await ensureSchema(env);
+  const row = await env.abstinence_db
+    .prepare('SELECT goal, relapses, diaries, plans FROM accounts WHERE code = ?')
+    .bind(code).first();
+  if (!row) throw new Error('账号不存在');
+
+  let all = [];
+  try { all = JSON.parse(row.relapses || '[]'); } catch (e) {}
+  let plans = [];
+  try { plans = JSON.parse(row.plans || '[]'); } catch (e) {}
+  const goal = (() => { try { return JSON.parse(row.goal || '{}'); } catch (e) { return {}; } })();
+
+  /* 高频诱因与高危时段（北京时间） */
+  const tf = {}; const segs = {};
+  for (const r of all) {
+    for (const t of (r.triggers || [])) tf[t] = (tf[t] || 0) + 1;
+    const h = toBJHour(r.time);
+    const seg = h < 6 ? '凌晨' : h < 12 ? '上午' : h < 18 ? '下午' : '晚上';
+    segs[seg] = (segs[seg] || 0) + 1;
+  }
+  const topTf = Object.entries(tf).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([t, c]) => `${t}(${c}次)`);
+  const topSegs = Object.entries(segs).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}${v}次`);
+  const existingPlans = plans.map(p => ({ if: p.ifText, then: p.thenText }));
+
+  const prompt = [
+    '你是一位自律习惯教练。用户在用一款「禁欲打卡」应用，需要建立"如果-那么"执行意图预案卡来应对冲动。',
+    goal.name ? `目标：${goal.name}。` : '',
+    `历史高频诱因：${topTf.length ? topTf.join('、') : '暂无记录'}；高危时段：${topSegs.length ? topSegs.join('、') : '暂无记录'}。`,
+    existingPlans.length ? `已有预案：${JSON.stringify(existingPlans)}（新建议须与它们不同）。` : '尚无预案。',
+    '',
+    '请生成 3 条预案候选，严格输出 JSON 数组（不要任何其他文字、不要 markdown 代码块标记）：',
+    '[{"if":"具体情境（含时间/地点/状态，20字内）","then":"立刻可执行的具体动作（30字内，从物理离开现场/冷刺激/身体消耗/注意力切换/延迟等待/呼吸调节中选择组合）"}]',
+    '要求：每条针对不同诱因场景；动作必须 10 秒内能开始执行；语气平实不说教。'
+  ].filter(Boolean).join('\n');
+
+  const text = await callDeepSeek(env, prompt);
+  /* 容错解析 JSON 数组 */
+  const start = text.indexOf('['); const end = text.lastIndexOf(']');
+  if (start === -1 || end === -1) throw new Error('AI 返回格式异常');
+  const arr = JSON.parse(text.slice(start, end + 1));
+  const suggestions = (Array.isArray(arr) ? arr : [])
+    .filter(s => s && s.if && s.then)
+    .slice(0, 3)
+    .map(s => ({ ifText: String(s.if).slice(0, 60), thenText: String(s.then).slice(0, 100) }));
+  if (!suggestions.length) throw new Error('AI 未返回有效预案');
+  return { suggestions };
+}
+
 export default {
   async scheduled(event, env, ctx) {
     ctx.waitUntil(runWeeklyReports(env));
   },
   async fetch(request, env) {
-    /* 手动触发端点：POST /  body {code} → 立即为该账号生成分析 */
     if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
     const url = new URL(request.url);
+    if (request.method === 'POST' && url.pathname === '/suggest') {
+      try {
+        const body = await request.json();
+        const code = String(body.code || '').trim().toUpperCase();
+        if (!code) return json({ ok: false, error: '缺少访问码' }, 400);
+        const data = await suggestPlansForAccount(env, code);
+        return json({ ok: true, ...data });
+      } catch (e) {
+        return json({ ok: false, error: e.message }, 500);
+      }
+    }
+    /* 手动触发端点：POST /  body {code} → 立即为该账号生成分析 */
     if (request.method === 'POST' && url.pathname === '/') {
       try {
         const body = await request.json();

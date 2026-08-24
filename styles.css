@@ -323,6 +323,54 @@ body {
   resize: vertical;
   margin-top: 10px;
 }
+.modal-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: none;
+  background: var(--card-2);
+  color: var(--text-3);
+  font-size: 14px;
+  cursor: pointer;
+  line-height: 1;
+}
+.modal-close:hover { color: var(--text); background: rgba(255, 255, 255, 0.1); }
+
+/* 预案卡 */
+.plan-actions { display: flex; gap: 8px; margin-top: 10px; }
+.plan-item {
+  background: var(--card-2);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.plan-if, .plan-then { font-size: 13px; color: var(--text-2); line-height: 1.7; word-break: break-word; }
+.plan-if b, .plan-then b {
+  display: inline-block;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  margin-right: 6px;
+}
+.plan-if b { background: rgba(232, 182, 76, 0.15); color: var(--gold); }
+.plan-then b { background: rgba(74, 222, 128, 0.15); color: var(--green); }
+.plan-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 6px;
+}
+.plan-stat { font-size: 11px; color: var(--text-3); }
+.review-plan {
+  background: var(--card-2);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.review-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
 
 .empty { text-align: center; color: var(--text-2); padding: 40px 20px; }
 .empty-icon { font-size: 40px; margin-bottom: 8px; }
@@ -413,6 +461,7 @@ input[type="datetime-local"] { color-scheme: dark; }
 }
 .modal-mask.hidden { display: none; }
 .modal {
+  position: relative;
   width: 100%;
   max-width: 440px;
   max-height: 88vh;

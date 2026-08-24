@@ -60,7 +60,7 @@ function ensureSchema(env) {
       .prepare(
         'CREATE TABLE IF NOT EXISTS accounts (' +
         'code TEXT PRIMARY KEY, goal TEXT, relapses TEXT, deleted TEXT, updated_at INTEGER, ' +
-        'ai_report TEXT, ai_report_week TEXT, diaries TEXT)'
+        'ai_report TEXT, ai_report_week TEXT, diaries TEXT, plans TEXT)'
       )
       .run()
       .then(() => true)
@@ -78,19 +78,22 @@ async function handleSync(request, env) {
       const code = (url.searchParams.get('code') || '').trim().toUpperCase();
       if (!code) return json({ ok: false, error: '缺少访问码' }, 400);
       const row = await env.abstinence_db
-        .prepare('SELECT goal, relapses, deleted, ai_report, ai_report_week, diaries FROM accounts WHERE code = ?')
+        .prepare('SELECT goal, relapses, deleted, ai_report, ai_report_week, diaries, plans FROM accounts WHERE code = ?')
         .bind(code).first();
       if (!row) return json({ ok: false, error: '访问码不存在' }, 404);
       const relapses = JSON.parse(row.relapses || '[]');
       const deleted = JSON.parse(row.deleted || '{}');
       let diaries = [];
       try { diaries = applyDeleted(JSON.parse(row.diaries || '[]'), deleted); } catch (e) {}
+      let plans = [];
+      try { plans = applyDeleted(JSON.parse(row.plans || '[]'), deleted); } catch (e) {}
       return json({
         ok: true,
         goal: JSON.parse(row.goal),
         relapses: applyDeleted(relapses, deleted),
         deleted,
         diaries,
+        plans,
         aiReport: row.ai_report ? { content: row.ai_report, week: row.ai_report_week || '' } : null,
         serverTime: Date.now()
       });
@@ -104,12 +107,13 @@ async function handleSync(request, env) {
       const clientGoal = body.goal || null;
       const clientRelapses = Array.isArray(body.relapses) ? body.relapses : [];
       const clientDiaries = Array.isArray(body.diaries) ? body.diaries : [];
+      const clientPlans = Array.isArray(body.plans) ? body.plans : [];
       const clientDeleted = body.deleted || {};
       const row = await env.abstinence_db
-        .prepare('SELECT goal, relapses, deleted, diaries FROM accounts WHERE code = ?')
+        .prepare('SELECT goal, relapses, deleted, diaries, plans FROM accounts WHERE code = ?')
         .bind(code).first();
 
-      let mergedGoal, mergedRelapses, mergedDeleted, mergedDiaries;
+      let mergedGoal, mergedRelapses, mergedDeleted, mergedDiaries, mergedPlans;
 
       if (row) {
         const serverGoal = JSON.parse(row.goal);
@@ -117,17 +121,21 @@ async function handleSync(request, env) {
         const serverDeleted = JSON.parse(row.deleted || '{}');
         let serverDiaries = [];
         try { serverDiaries = JSON.parse(row.diaries || '[]'); } catch (e) {}
+        let serverPlans = [];
+        try { serverPlans = JSON.parse(row.plans || '[]'); } catch (e) {}
         mergedGoal = !clientGoal ? serverGoal
           : !serverGoal ? clientGoal
           : (clientGoal.updatedAt || 0) >= (serverGoal.updatedAt || 0) ? clientGoal : serverGoal;
-        mergedRelapses = mergeRecords(clientRelapses, serverRelapses);
-        mergedDiaries = applyDeleted(mergeRecords(clientDiaries, serverDiaries), mergeDeleted(clientDeleted, serverDeleted));
-        mergedDeleted = mergeDeleted(clientDeleted, serverDeleted);
-        mergedRelapses = applyDeleted(mergedRelapses, mergedDeleted);
+        const allDeleted = mergeDeleted(clientDeleted, serverDeleted);
+        mergedRelapses = applyDeleted(mergeRecords(clientRelapses, serverRelapses), allDeleted);
+        mergedDiaries = applyDeleted(mergeRecords(clientDiaries, serverDiaries), allDeleted);
+        mergedPlans = applyDeleted(mergeRecords(clientPlans, serverPlans), allDeleted);
+        mergedDeleted = allDeleted;
       } else {
         mergedGoal = clientGoal;
         mergedRelapses = clientRelapses;
         mergedDiaries = clientDiaries;
+        mergedPlans = clientPlans;
         mergedDeleted = mergeDeleted(clientDeleted, {});
         mergedRelapses = applyDeleted(mergedRelapses, mergedDeleted);
       }
@@ -135,10 +143,10 @@ async function handleSync(request, env) {
       const now = Date.now();
       await env.abstinence_db
         .prepare(
-          'INSERT INTO accounts (code, goal, relapses, deleted, updated_at, diaries) VALUES (?, ?, ?, ?, ?, ?) ' +
-          'ON CONFLICT(code) DO UPDATE SET goal = excluded.goal, relapses = excluded.relapses, deleted = excluded.deleted, updated_at = excluded.updated_at, diaries = excluded.diaries'
+          'INSERT INTO accounts (code, goal, relapses, deleted, updated_at, diaries, plans) VALUES (?, ?, ?, ?, ?, ?, ?) ' +
+          'ON CONFLICT(code) DO UPDATE SET goal = excluded.goal, relapses = excluded.relapses, deleted = excluded.deleted, updated_at = excluded.updated_at, diaries = excluded.diaries, plans = excluded.plans'
         )
-        .bind(code, JSON.stringify(mergedGoal), JSON.stringify(mergedRelapses), JSON.stringify(mergedDeleted), now, JSON.stringify(mergedDiaries))
+        .bind(code, JSON.stringify(mergedGoal), JSON.stringify(mergedRelapses), JSON.stringify(mergedDeleted), now, JSON.stringify(mergedDiaries), JSON.stringify(mergedPlans))
         .run();
 
       /* 回传最新 AI 报告（如有），客户端同步时一并拿到 */
@@ -152,6 +160,7 @@ async function handleSync(request, env) {
         relapses: mergedRelapses,
         deleted: mergedDeleted,
         diaries: mergedDiaries,
+        plans: mergedPlans,
         aiReport: after && after.ai_report ? { content: after.ai_report, week: after.ai_report_week || '' } : null,
         serverTime: now
       });

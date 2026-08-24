@@ -64,7 +64,9 @@ function normalizeState() {
   state.cloud.lastSyncAt = state.cloud.lastSyncAt || null;
   if (!Array.isArray(state.reportSeenKeys)) state.reportSeenKeys = []; /* 已看过周报的周标识 */
   if (!state.aiReport || typeof state.aiReport !== 'object') state.aiReport = null; /* AI 周报 {content, week} */
-  if (!Array.isArray(state.diaries)) state.diaries = []; /* 心情日记 [{id,date,mood,content,updatedAt}] */
+  if (!Array.isArray(state.diaries)) state.diaries = []; /* 心情日记 [{id,time,mood,content,updatedAt}] */
+  state.diaries = state.diaries.map(normalizeDiary);
+  if (!Array.isArray(state.plans)) state.plans = []; /* 预案卡 [{id,ifText,thenText,source,createdAt,updatedAt,used,missed}] */
 }
 
 /* ---------------- 工具函数 ---------------- */
@@ -578,12 +580,13 @@ async function syncNow(quiet = false) {
       mergeWithCloud(pull);
       if (pull.aiReport !== undefined) state.aiReport = pull.aiReport;
       if (Array.isArray(pull.diaries)) mergeDiariesFromCloud(pull.diaries);
+      if (Array.isArray(pull.plans)) mergePlansFromCloud(pull.plans);
     }
 
     const res = await fetch(SYNC_API, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, goal: state.goal, relapses: state.relapses, diaries: state.diaries, deleted: state.deleted })
+      body: JSON.stringify({ code, goal: state.goal, relapses: state.relapses, diaries: state.diaries, plans: state.plans, deleted: state.deleted })
     });
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || '同步失败');
@@ -592,6 +595,7 @@ async function syncNow(quiet = false) {
       state.aiReport = data.aiReport; /* {content, week} 或 null */
     }
     if (Array.isArray(data.diaries)) mergeDiariesFromCloud(data.diaries);
+    if (Array.isArray(data.plans)) mergePlansFromCloud(data.plans);
 
     state.cloud.lastSyncAt = Date.now();
     save();
@@ -637,10 +641,11 @@ function doDisconnect() {
   toast('已断开云端连接（本地数据保留）');
 }
 
-/* 云端日记合并进本地（updatedAt 新者胜，剔除已删除） */
+/* 云端日记合并进本地（updatedAt 新者胜，剔除已删除，旧格式归一化） */
 function mergeDiariesFromCloud(cloudDiaries) {
   const map = new Map();
-  const touch = d => {
+  const touch = raw => {
+    const d = normalizeDiary(raw);
     if (!d || !d.id) return;
     const ts = state.deleted[d.id];
     if (ts != null && ts >= (d.updatedAt || 0)) return; /* 已被删除 */
@@ -652,26 +657,194 @@ function mergeDiariesFromCloud(cloudDiaries) {
   state.diaries = [...map.values()];
 }
 
+/* 云端预案合并进本地（updatedAt 新者胜，剔除已删除） */
+function mergePlansFromCloud(cloudPlans) {
+  const map = new Map();
+  const touch = raw => {
+    const p = raw && typeof raw === 'object' ? raw : null;
+    if (!p || !p.id) return;
+    const ts = state.deleted[p.id];
+    if (ts != null && ts >= (p.updatedAt || 0)) return;
+    const cur = map.get(p.id);
+    if (!cur || (p.updatedAt || 0) > (cur.updatedAt || 0)) map.set(p.id, p);
+  };
+  for (const p of state.plans) touch(p);
+  for (const p of cloudPlans) touch(p);
+  state.plans = [...map.values()];
+}
+
+/* ---------------- 预案卡（如果-那么） ---------------- */
+
+const PLAN_ACTIONS = [
+  '🚪 立刻离开当前位置，换个房间或出门走两分钟',
+  '🧊 用冷水洗脸 / 冲手腕 30 秒',
+  '💪 做 20 个俯卧撑或深蹲到发酸',
+  '🔔 给朋友发条消息，或大声读一段文字',
+  '⏳ 设 10 分钟倒计时，等冲动峰值过去',
+  '🫁 4-7-8 呼吸 5 轮（吸4秒-屏7秒-呼8秒）'
+];
+let editingPlanId = null;
+
+function renderPlans() {
+  const card = $('planCard');
+  if (!state.plans.length) {
+    /* 未连接云端也能建预案，但 AI 推荐需要数据；始终显示入口引导 */
+    card.style.display = 'block';
+    $('planList').innerHTML = '<div class="diary-empty">提前把"如果…我就…"定好，冲动来时不用临场硬扛。先建一张兜底预案吧</div>';
+    return;
+  }
+  card.style.display = 'block';
+  const sorted = [...state.plans].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  $('planList').innerHTML = sorted.map(p => {
+    const stat = (p.missed || p.used)
+      ? `<span class="plan-stat">关联破戒 ${(p.missed || 0) + (p.used || 0)} 次 · 执行 ${p.used || 0} 次</span>`
+      : '<span class="plan-stat">尚未实战过</span>';
+    return `<div class="plan-item">
+      <div class="plan-if"><b>如果</b> ${esc(p.ifText)}</div>
+      <div class="plan-then"><b>那么</b> ${esc(p.thenText)}</div>
+      <div class="plan-foot">${stat}
+        <span class="hi-actions">
+          <button class="chip-btn" data-pedit="${p.id}">编辑</button>
+          <button class="chip-btn hi-del" data-pdel="${p.id}">✕</button>
+        </span></div>
+    </div>`;
+  }).join('');
+}
+
+function openPlanModal(plan) {
+  editingPlanId = plan ? plan.id : null;
+  $('planIf').value = plan ? plan.ifText : '';
+  $('planThen').value = plan ? plan.thenText : '';
+  $('planActionChips').innerHTML = PLAN_ACTIONS.map(a => `<button type="button" class="chip-opt" data-action="${esc(a)}">${esc(a.split(' ')[0])}</button>`).join('');
+  $('planModal').classList.remove('hidden');
+}
+
+function closePlanModal() {
+  $('planModal').classList.add('hidden');
+}
+
+function savePlan() {
+  const ifText = $('planIf').value.trim();
+  const thenText = $('planThen').value.trim();
+  if (!ifText) { toast('请填写触发情境'); return; }
+  if (!thenText) { toast('请填写要执行的动作'); return; }
+  if (editingPlanId) {
+    const rec = state.plans.find(p => p.id === editingPlanId);
+    if (rec) { rec.ifText = ifText; rec.thenText = thenText; rec.updatedAt = Date.now(); }
+  } else {
+    state.plans.push({ id: 'p' + Date.now().toString(36), ifText, thenText, source: 'manual', createdAt: Date.now(), updatedAt: Date.now(), used: 0, missed: 0 });
+  }
+  save();
+  markDirty();
+  renderPlans();
+  closePlanModal();
+  toast('预案已保存 🛡️');
+}
+
+async function aiSuggestPlans() {
+  if (!state.cloud.connected || !state.cloud.code) { toast('请先在设置页连接云端同步'); return; }
+  const btn = $('btnAiPlan');
+  btn.disabled = true;
+  btn.textContent = '✨ AI 思考中…';
+  try {
+    const res = await fetch(SYNC_API.replace('/sync', '/suggest-plan'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: state.cloud.code })
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || '生成失败');
+    showPlanSuggestions(data.suggestions);
+  } catch (e) {
+    toast('AI 推荐失败：' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '✨ AI 推荐';
+  }
+}
+
+function showPlanSuggestions(list) {
+  $('planSuggestList').innerHTML = list.map((s, i) => `
+    <div class="plan-item">
+      <div class="plan-if"><b>如果</b> ${esc(s.ifText)}</div>
+      <div class="plan-then"><b>那么</b> ${esc(s.thenText)}</div>
+      <div class="modal-actions" style="margin-top:8px">
+        <button class="chip-btn" data-adopt="${i}">✔ 采用这张</button>
+      </div>
+    </div>`).join('');
+  window.__planSuggestions = list;
+  $('planSuggestModal').classList.remove('hidden');
+}
+
+function adoptPlan(idx) {
+  const s = (window.__planSuggestions || [])[idx];
+  if (!s) return;
+  state.plans.push({ id: 'p' + Date.now().toString(36), ifText: s.ifText, thenText: s.thenText, source: 'ai', createdAt: Date.now(), updatedAt: Date.now(), used: 0, missed: 0 });
+  save();
+  markDirty();
+  renderPlans();
+  $('planSuggestModal').classList.add('hidden');
+  toast('预案已采用 🛡️');
+}
+
+/* 破戒保存后的预案复盘 */
+let reviewRelapseId = null;
+function openRelapseReview(relapseId) {
+  reviewRelapseId = relapseId || null;
+  if (!state.plans.length) return; /* 没有预案不打扰 */
+  $('reviewPlanList').innerHTML = state.plans.map(p => `
+    <div class="review-plan">
+      <div class="plan-if"><b>如果</b> ${esc(p.ifText)}</div>
+      <div class="review-btns">
+        <button class="chip-btn" data-review="${p.id}:used">执行了但没拦住</button>
+        <button class="chip-btn" data-review="${p.id}:missed">没来得及执行</button>
+      </div>
+    </div>`).join('');
+  $('reviewModal').classList.remove('hidden');
+}
+
+function applyReview(pair) {
+  const [planId, outcome] = pair.split(':');
+  const rec = state.plans.find(p => p.id === planId);
+  if (rec) {
+    rec[outcome === 'used' ? 'used' : 'missed'] = (rec[outcome === 'used' ? 'used' : 'missed'] || 0) + 1;
+    rec.updatedAt = Date.now();
+    save();
+    markDirty();
+    renderPlans();
+  }
+  $('reviewModal').classList.add('hidden');
+  toast('已记录，预案会越来越准 📊');
+}
+
 /* ---------------- 心情日记 ---------------- */
 
 const MOODS = ['😊', '🙂', '😐', '😞', '😫', '😡'];
 let editingDiaryId = null;
 
+/* 归一化：兼容旧版仅日期的数据（date → time 当日 12:00） */
+function normalizeDiary(d) {
+  if (!d || typeof d !== 'object') return { id: 'd' + Math.random().toString(36).slice(2), time: toLocalInput(new Date()), mood: '', content: '', updatedAt: 0 };
+  if (!d.time && d.date) d.time = d.date + 'T12:00';
+  return d;
+}
+
 function renderDiaries() {
   const list = $('diaryList');
   const today = toLocalInput(new Date()).slice(0, 10);
   const btn = $('btnNewDiary');
-  const hasToday = state.diaries.some(d => d.date === today);
+  const hasToday = state.diaries.some(d => (d.time || '').slice(0, 10) === today);
   btn.textContent = hasToday ? '✏️ 编辑今天的' : '✏️ 写今天';
 
   if (!state.diaries.length) {
     list.innerHTML = '<div class="diary-empty">记下今天的心情和经历，AI 周报会更懂你</div>';
     return;
   }
-  const recent = [...state.diaries].sort((a, b) => a.date < b.date ? 1 : -1).slice(0, 15);
+  const recent = [...state.diaries].sort((a, b) => (a.time || '') < (b.time || '') ? 1 : -1).slice(0, 15);
   list.innerHTML = recent.map(d => {
-    const dt = new Date(d.date + 'T12:00:00');
-    const label = `${dt.getMonth() + 1}月${dt.getDate()}日`;
+    const t = d.time || '';
+    const dt = new Date(t);
+    const label = `${dt.getMonth() + 1}月${dt.getDate()}日 ${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
     return `<div class="diary-item">
       <div class="diary-head"><b>${d.mood || '📝'} ${label}</b>
         <span class="hi-actions">
@@ -685,13 +858,15 @@ function renderDiaries() {
 
 function openDiaryModal(dateStr) {
   editingDiaryId = null;
-  const target = dateStr || toLocalInput(new Date()).slice(0, 10);
-  $('diaryDate').value = target;
+  const nowInput = toLocalInput(new Date());
+  const target = dateStr ? dateStr + 'T12:00' : nowInput; /* 补记某天 → 默认当天中午 */
+  $('diaryTime').value = target;
   $('diaryContent').value = '';
   let mood = null;
-  const existing = state.diaries.find(d => d.date === target);
+  const existing = state.diaries.find(d => editingByDate(d, target));
   if (existing) {
     editingDiaryId = existing.id;
+    $('diaryTime').value = existing.time;
     $('diaryContent').value = existing.content;
     mood = existing.mood || null;
   }
@@ -699,30 +874,39 @@ function openDiaryModal(dateStr) {
   $('diaryModal').classList.remove('hidden');
 }
 
+/* 判断某篇日记是否属于目标日期（按日比较） */
+function editingByDate(d, datetimeLocal) {
+  return (d.time || '').slice(0, 10) === String(datetimeLocal).slice(0, 10);
+}
+
+function closeDiaryModal() {
+  $('diaryModal').classList.add('hidden');
+}
+
 function saveDiary() {
   const content = $('diaryContent').value.trim();
   if (!content) { toast('写点什么再保存吧'); return; }
-  const date = $('diaryDate').value;
-  if (!date) { toast('请选择日期'); return; }
+  const timeVal = $('diaryTime').value;
+  if (!timeVal) { toast('请选择时间'); return; }
   const moodEl = document.querySelector('#diaryMoods .chip-opt.sel');
   const mood = moodEl ? moodEl.dataset.mood : '';
 
   if (editingDiaryId) {
     const rec = state.diaries.find(d => d.id === editingDiaryId);
-    if (rec) { rec.date = date; rec.mood = mood; rec.content = content; rec.updatedAt = Date.now(); }
+    if (rec) { rec.time = timeVal; rec.mood = mood; rec.content = content; rec.updatedAt = Date.now(); }
   } else {
     /* 同一天已有日记则覆盖更新那篇 */
-    const existing = state.diaries.find(d => d.date === date);
+    const existing = state.diaries.find(d => editingByDate(d, timeVal));
     if (existing) {
-      existing.mood = mood; existing.content = content; existing.updatedAt = Date.now();
+      existing.time = timeVal; existing.mood = mood; existing.content = content; existing.updatedAt = Date.now();
     } else {
-      state.diaries.push({ id: 'd' + Date.now().toString(36), date, mood, content, updatedAt: Date.now() });
+      state.diaries.push({ id: 'd' + Date.now().toString(36), time: timeVal, mood, content, updatedAt: Date.now() });
     }
   }
   save();
   markDirty();
   renderDiaries();
-  $('diaryModal').classList.add('hidden');
+  closeDiaryModal();
   toast('日记已保存 📝');
 }
 
@@ -843,6 +1027,7 @@ function reRenderAll() {
   renderStats();
   renderHistory();
   renderDiaries();
+  renderPlans();
   renderSettings();
 }
 
@@ -951,12 +1136,14 @@ function bindEvents() {
       }
     } else {
       /* 新建模式 */
+      const newId = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
       state.relapses.push({
-        id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+        id: newId,
         createdAt: new Date().toISOString(),
         ...payload
       });
       toast('已记录，重新开始 💪');
+      setTimeout(() => openRelapseReview(newId), 400); /* 预案复盘：仅新建时 */
     }
     save();
     closeRelapseModal();
@@ -1074,6 +1261,58 @@ function bindEvents() {
 
   /* 心情日记 */
   $('btnNewDiary').addEventListener('click', () => openDiaryModal());
+  $('btnDiarySave').addEventListener('click', saveDiary);
+  $('btnDiaryClose').addEventListener('click', closeDiaryModal);
+  $('diaryModal').addEventListener('click', e => { if (e.target === $('diaryModal')) closeDiaryModal(); });
+
+  /* 预案卡 */
+  $('btnNewPlan').addEventListener('click', () => openPlanModal(null));
+  $('btnAiPlan').addEventListener('click', aiSuggestPlans);
+  $('btnPlanSave').addEventListener('click', savePlan);
+  $('btnPlanClose').addEventListener('click', closePlanModal);
+  $('planModal').addEventListener('click', e => { if (e.target === $('planModal')) closePlanModal(); });
+  $('planActionChips').addEventListener('click', e => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    const cur = $('planThen').value.trim();
+    const act = btn.dataset.action.replace(/^\S+\s/, ''); /* 去掉 emoji 前缀 */
+    if (cur && !cur.endsWith('，') && !cur.endsWith(';') && !cur.endsWith('；')) act && ($('planThen').value = cur + '，' + act);
+    else if (!cur) $('planThen').value = act;
+  });
+  $('planList').addEventListener('click', e => {
+    const editBtn = e.target.closest('[data-pedit]');
+    if (editBtn) {
+      const rec = state.plans.find(p => p.id === editBtn.dataset.pedit);
+      if (rec) openPlanModal(rec);
+      return;
+    }
+    const delBtn = e.target.closest('[data-pdel]');
+    if (delBtn) {
+      const rec = state.plans.find(p => p.id === delBtn.dataset.pdel);
+      if (!rec) return;
+      if (!confirm('删除这张预案卡？')) return;
+      state.plans = state.plans.filter(p => p.id !== rec.id);
+      state.deleted[rec.id] = Date.now();
+      save();
+      markDirty();
+      renderPlans();
+      toast('已删除');
+    }
+  });
+  $('planSuggestList').addEventListener('click', e => {
+    const adoptBtn = e.target.closest('[data-adopt]');
+    if (adoptBtn) adoptPlan(parseInt(adoptBtn.dataset.adopt, 10));
+  });
+  $('btnPlanSuggestClose').addEventListener('click', () => $('planSuggestModal').classList.add('hidden'));
+  $('planSuggestModal').addEventListener('click', e => { if (e.target === $('planSuggestModal')) $('planSuggestModal').classList.add('hidden'); });
+
+  /* 预案复盘 */
+  $('reviewPlanList').addEventListener('click', e => {
+    const btn = e.target.closest('[data-review]');
+    if (btn) applyReview(btn.dataset.review);
+  });
+  $('btnReviewSkip').addEventListener('click', () => $('reviewModal').classList.add('hidden'));
+  $('reviewModal').addEventListener('click', e => { if (e.target === $('reviewModal')) $('reviewModal').classList.add('hidden'); });
   $('btnDiarySave').addEventListener('click', saveDiary);
   $('diaryMoods').addEventListener('click', e => {
     const btn = e.target.closest('[data-mood]');
