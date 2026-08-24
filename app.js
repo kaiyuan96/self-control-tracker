@@ -62,6 +62,7 @@ function normalizeState() {
   state.cloud.code = state.cloud.code || '';
   state.cloud.connected = !!state.cloud.connected;
   state.cloud.lastSyncAt = state.cloud.lastSyncAt || null;
+  if (!Array.isArray(state.reportSeenKeys)) state.reportSeenKeys = []; /* 已看过周报的周标识 */
 }
 
 /* ---------------- 工具函数 ---------------- */
@@ -590,6 +591,102 @@ function doDisconnect() {
   toast('已断开云端连接（本地数据保留）');
 }
 
+/* ---------------- 每周总结（周报） ---------------- */
+
+function weekKey(monday) {
+  return `${monday.getFullYear()}-${pad(monday.getMonth() + 1)}-${pad(monday.getDate())}`;
+}
+
+/* 打开应用时检查：新的一周是否还没看过上周总结 */
+function checkWeeklyReport() {
+  const now = new Date();
+  const thisMon = startOfWeek(now);
+  const lastMon = addDays(thisMon, -7);
+  const key = weekKey(lastMon);
+  if (state.reportSeenKeys.includes(key)) return;
+
+  const cnt = countInRange(state.relapses, lastMon, thisMon);
+  /* 上周无记录且全库无历史 → 新用户，不打扰 */
+  if (cnt === 0 && state.relapses.length === 0) return;
+  openWeeklyReport(lastMon);
+}
+
+function buildReportBody(lastMon) {
+  const thisMon = addDays(lastMon, 7);
+  const prevMon = addDays(lastMon, -7);
+  const inR = (r, a, b) => { const t = new Date(r.time).getTime(); return t >= a.getTime() && t < b.getTime(); };
+  const cur = sortedRelapses().filter(r => inR(r, lastMon, thisMon));
+  const prev = sortedRelapses().filter(r => inR(r, prevMon, lastMon));
+
+  /* 上周内最长"干净"天数：从周一到最后一次破戒前；无破戒则整周 */
+  const lastRelapseDay = cur.length ? new Date(cur[cur.length - 1].time) : null;
+  let cleanDays;
+  if (!cur.length) cleanDays = 7;
+  else {
+    cleanDays = Math.max(0, Math.floor((lastRelapseDay - lastMon) / 86400000));
+    if (!inR({ time: lastRelapseDay.toISOString() }, lastMon, thisMon)) cleanDays = 7;
+  }
+
+  /* 对比文案 */
+  let cmpText, cmpClass;
+  if (prev.length === 0 && cur.length === 0) { cmpText = '持续保持零破戒'; cmpClass = 'good'; }
+  else if (cur.length === 0) { cmpText = '🎉 零破戒！完美一周'; cmpClass = 'good'; }
+  else if (prev.length === 0) { cmpText = `出现 ${cur.length} 次`; cmpClass = 'bad'; }
+  else if (cur.length > prev.length) { cmpText = `↑ 比前一周多 ${cur.length - prev.length} 次`; cmpClass = 'bad'; }
+  else if (cur.length < prev.length) { cmpText = `↓ 比前一周少 ${prev.length - cur.length} 次`; cmpClass = 'good'; }
+  else { cmpText = '与前一周持平'; cmpClass = 'flat'; }
+
+  /* 诱因 Top3 */
+  const tf = {};
+  for (const r of cur) for (const t of (r.triggers || [])) tf[t] = (tf[t] || 0) + 1;
+  const topTriggers = Object.entries(tf).sort((a, b) => b[1] - a[1]).slice(0, 3);
+
+  /* 时段分布 */
+  const segs = {};
+  for (const r of cur) segs[SEG_NAMES[Math.floor(new Date(r.time).getHours() / 6)]] = (segs[SEG_NAMES[Math.floor(new Date(r.time).getHours() / 6)]] || 0) + 1;
+  const topSeg = Object.entries(segs).sort((a, b) => b[1] - a[1])[0];
+
+  /* 建议 */
+  let tip;
+  if (cur.length === 0) tip = '上周零破戒，把这套节奏保持下去——记录让你更清醒。';
+  else if (topSeg && topSeg[1] >= Math.ceil(cur.length / 2)) tip = `你的破戒集中在【${topSeg[0]}】时段，下周这个时段提前安排别的事，避开触发场景。`;
+  else if (topTriggers.length) tip = `高频诱因是「${topTriggers[0][0]}」，下次它冒头时先离开现场 10 分钟。`;
+  else tip = '破戒不是失败，记录并复盘，趋势会越来越好。';
+
+  return `
+    <div class="report-grid">
+      <div class="report-cell">
+        <div class="report-num ${cmpClass}">${cur.length}<small> 次</small></div>
+        <div class="report-label">上周破戒 · ${cmpText}</div>
+      </div>
+      <div class="report-cell">
+        <div class="report-num">${cleanDays}<small> 天</small></div>
+        <div class="report-label">上周最长干净纪录</div>
+      </div>
+    </div>
+    ${cur.length ? `<div class="report-sec"><b>诱因：</b>${topTriggers.length ? topTriggers.map(([t, c]) => `<span class="chip">${esc(t)} ×${c}</span>`).join(' ') : '<span class="report-dim">未填写</span>'}</div>` : ''}
+    <div class="report-tip">${esc(tip)}</div>`;
+}
+
+const SEG_NAMES = ['凌晨', '上午', '下午', '晚上'];
+
+function openWeeklyReport(lastMon) {
+  const thisMon = addDays(lastMon, 7);
+  $('reportRange').textContent = `${lastMon.getFullYear()}年${lastMon.getMonth() + 1}月${lastMon.getDate()}日 ~ ${thisMon.getMonth() + 1}月${thisMon.getDate()}日`;
+  $('reportBody').innerHTML = buildReportBody(lastMon);
+  $('reportModal').classList.remove('hidden');
+}
+
+function closeWeeklyReport(lastMon) {
+  const key = weekKey(lastMon);
+  if (!state.reportSeenKeys.includes(key)) {
+    state.reportSeenKeys.push(key);
+    if (state.reportSeenKeys.length > 8) state.reportSeenKeys = state.reportSeenKeys.slice(-8);
+    save();
+  }
+  $('reportModal').classList.add('hidden');
+}
+
 /* ---------------- 其他 UI ---------------- */
 
 function toast(msg) {
@@ -877,6 +974,14 @@ function init() {
   if (state.cloud.connected && state.cloud.code) {
     setTimeout(() => syncNow(true), 800);
   }
+
+  /* 每周总结：新的一周首次打开时弹出上周总结（等云同步完成后再查，数据更全） */
+  $('btnReportClose').addEventListener('click', () => {
+    const now = new Date();
+    const lastMon = addDays(startOfWeek(now), -7);
+    closeWeeklyReport(lastMon);
+  });
+  if (state.onboarded) setTimeout(checkWeeklyReport, state.cloud.connected ? 2500 : 600);
 }
 
 let lastRenderedDate = new Date().getDate();

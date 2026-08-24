@@ -256,6 +256,30 @@ body {
 .hi-actions { display: flex; gap: 4px; flex-shrink: 0; }
 .hi-actions .hi-del { font-size: 14px; }
 
+/* 每周总结 */
+.report-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+.report-cell {
+  background: var(--card-2);
+  border-radius: 12px;
+  padding: 14px 10px;
+  text-align: center;
+}
+.report-num { font-size: 28px; font-weight: 800; color: var(--gold); font-variant-numeric: tabular-nums; }
+.report-num small { font-size: 13px; color: var(--text-3); font-weight: 500; }
+.report-num.good { color: var(--green); }
+.report-num.bad { color: var(--red); }
+.report-label { font-size: 12px; color: var(--text-2); margin-top: 4px; }
+.report-sec { font-size: 13px; color: var(--text-2); margin-bottom: 12px; line-height: 2; }
+.report-dim { color: var(--text-3); }
+.report-tip {
+  font-size: 13px;
+  color: var(--text);
+  background: var(--gold-soft);
+  border: 1px solid rgba(232, 182, 76, 0.25);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
 .empty { text-align: center; color: var(--text-2); padding: 40px 20px; }
 .empty-icon { font-size: 40px; margin-bottom: 8px; }
 
