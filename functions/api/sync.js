@@ -132,11 +132,17 @@ async function handleSync(request, env) {
         .bind(code, JSON.stringify(mergedGoal), JSON.stringify(mergedRelapses), JSON.stringify(mergedDeleted), now)
         .run();
 
+      /* 回传最新 AI 报告（如有），客户端同步时一并拿到 */
+      const after = await env.abstinence_db
+        .prepare('SELECT ai_report, ai_report_week FROM accounts WHERE code = ?')
+        .bind(code).first();
+
       return json({
         ok: true,
         goal: mergedGoal,
         relapses: mergedRelapses,
         deleted: mergedDeleted,
+        aiReport: after && after.ai_report ? { content: after.ai_report, week: after.ai_report_week || '' } : null,
         serverTime: now
       });
     }

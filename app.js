@@ -573,7 +573,10 @@ async function syncNow(quiet = false) {
     } catch (e) {
       throw new Error('网络错误：无法连接同步服务器（可能需要代理）');
     }
-    if (pull && pull.ok) mergeWithCloud(pull);
+    if (pull && pull.ok) {
+      mergeWithCloud(pull);
+      if (pull.aiReport !== undefined) state.aiReport = pull.aiReport;
+    }
 
     const res = await fetch(SYNC_API, {
       method: 'POST',
