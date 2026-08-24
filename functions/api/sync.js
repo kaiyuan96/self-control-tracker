@@ -77,7 +77,7 @@ async function handleSync(request, env) {
       const code = (url.searchParams.get('code') || '').trim().toUpperCase();
       if (!code) return json({ ok: false, error: '缺少访问码' }, 400);
       const row = await env.abstinence_db
-        .prepare('SELECT goal, relapses, deleted FROM accounts WHERE code = ?')
+        .prepare('SELECT goal, relapses, deleted, ai_report, ai_report_week FROM accounts WHERE code = ?')
         .bind(code).first();
       if (!row) return json({ ok: false, error: '访问码不存在' }, 404);
       const relapses = JSON.parse(row.relapses || '[]');
@@ -87,6 +87,7 @@ async function handleSync(request, env) {
         goal: JSON.parse(row.goal),
         relapses: applyDeleted(relapses, deleted),
         deleted,
+        aiReport: row.ai_report ? { content: row.ai_report, week: row.ai_report_week || '' } : null,
         serverTime: Date.now()
       });
     }

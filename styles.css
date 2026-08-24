@@ -280,6 +280,19 @@ body {
   padding: 10px 12px;
 }
 
+/* AI 分析卡片 */
+.ai-card { border-left-color: #a78bfa; }
+.ai-card .tip-title { color: #c4b5fd; }
+.ai-meta { font-size: 11px; color: var(--text-3); font-weight: 400; }
+.ai-body {
+  font-size: 13px;
+  color: var(--text-2);
+  margin-top: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.8;
+}
+
 .empty { text-align: center; color: var(--text-2); padding: 40px 20px; }
 .empty-icon { font-size: 40px; margin-bottom: 8px; }
 

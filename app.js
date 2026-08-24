@@ -63,6 +63,7 @@ function normalizeState() {
   state.cloud.connected = !!state.cloud.connected;
   state.cloud.lastSyncAt = state.cloud.lastSyncAt || null;
   if (!Array.isArray(state.reportSeenKeys)) state.reportSeenKeys = []; /* 已看过周报的周标识 */
+  if (!state.aiReport || typeof state.aiReport !== 'object') state.aiReport = null; /* AI 周报 {content, week} */
 }
 
 /* ---------------- 工具函数 ---------------- */
@@ -223,6 +224,42 @@ function renderHome() {
   $('qsBest').textContent = fmtDays(longestStreakMs());
 
   renderTip();
+  renderAI();
+}
+
+/* AI 分析卡片 */
+function renderAI() {
+  const card = $('aiCard');
+  const r = state.aiReport;
+  if (!r || !r.content) { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  $('aiMeta').textContent = r.week ? `· ${r.week}` : '';
+  $('aiBody').textContent = r.content;
+}
+
+async function regenerateAI() {
+  if (!state.cloud.connected || !state.cloud.code) { toast('请先在设置页连接云端同步'); return; }
+  const btn = $('btnRegenAI');
+  btn.disabled = true;
+  btn.textContent = '🤔 AI 正在分析…';
+  try {
+    const res = await fetch(SYNC_API.replace('/sync', '/generate-report'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: state.cloud.code })
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || '生成失败');
+    state.aiReport = { content: data.report.content, week: data.report.week };
+    save();
+    renderAI();
+    toast('AI 分析已更新 ✨');
+  } catch (e) {
+    toast('生成失败：' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🔄 让 AI 重新分析';
+  }
 }
 
 function renderTip() {
@@ -546,6 +583,9 @@ async function syncNow(quiet = false) {
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || '同步失败');
     mergeWithCloud(data);
+    if (data.aiReport !== undefined) {
+      state.aiReport = data.aiReport; /* {content, week} 或 null */
+    }
 
     state.cloud.lastSyncAt = Date.now();
     save();
@@ -932,6 +972,9 @@ function bindEvents() {
   $('syncCodeInput').addEventListener('keydown', e => {
     if (e.key === 'Enter') doConnect(e.target.value);
   });
+
+  /* AI 分析 */
+  $('btnRegenAI').addEventListener('click', regenerateAI);
 
   /* 首次引导 */
   $('btnOnboard').addEventListener('click', () => {
