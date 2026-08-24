@@ -27,7 +27,7 @@ function ensureSchema(env) {
       .prepare(
         'CREATE TABLE IF NOT EXISTS accounts (' +
         'code TEXT PRIMARY KEY, goal TEXT, relapses TEXT, deleted TEXT, updated_at INTEGER, ' +
-        'ai_report TEXT, ai_report_week TEXT)'
+        'ai_report TEXT, ai_report_week TEXT, diaries TEXT)'
       )
       .run()
       .then(() => true)
@@ -49,12 +49,22 @@ function lastWeekRange() {
   return { start: lastMonUtcMs, end: thisMonUtcMs, weekLabel: `${f(labelStart)} ~ ${f(labelEnd)}` };
 }
 
-/* 全历史统计摘要（压缩数据，不含逐条原文）——与 functions/api/generate-report.js 保持一致 */
+/* ISO → 北京时间字符串（AI 按字面阅读，必须给本地时间） */
+function toBJStr(iso) {
+  const d = new Date(new Date(iso).getTime() + 8 * 3600000);
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
+}
+/* ISO → 北京小时数 */
+function toBJHour(iso) {
+  return new Date(new Date(iso).getTime() + 8 * 3600000).getUTCHours();
+}
+
+/* 全历史统计摘要（压缩数据，不含逐条原文） */
 function buildHistorySummary(allRecords) {
   if (!allRecords.length) return '暂无任何历史记录。';
   const sorted = [...allRecords].sort((a, b) => new Date(a.time) - new Date(b.time));
-  const pad = n => String(n).padStart(2, '0');
-  const f = iso => { const d = new Date(iso); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+  const f = iso => toBJStr(iso).slice(0, 10);
 
   const bj = new Date(Date.now() + 8 * 3600000);
   const day = (bj.getUTCDay() + 6) % 7;
@@ -70,7 +80,7 @@ function buildHistorySummary(allRecords) {
   const tf = {}; const segs = {};
   for (const r of sorted) {
     for (const t of (r.triggers || [])) tf[t] = (tf[t] || 0) + 1;
-    const h = new Date(r.time).getHours();
+    const h = toBJHour(r.time); /* 时区修正后的北京小时 */
     const seg = h < 6 ? '凌晨' : h < 12 ? '上午' : h < 18 ? '下午' : '晚上';
     segs[seg] = (segs[seg] || 0) + 1;
   }
@@ -85,11 +95,11 @@ function buildHistorySummary(allRecords) {
     `近 8 周趋势（从旧到新）：[${trend.join(', ')}]。`,
     `诱因累计排名：${topTf}。`,
     `时段分布：${Object.entries(segs).map(([k, v]) => `${k}${v}次`).join('、')}。`,
-    `最长连续坚持约 ${(best / 86400000).toFixed(1)} 天，当前距上次破戒 ${((Date.now() - new Date(sorted[sorted.length - 1].time).getTime()) / 86400000).toFixed(1)} 天。`
+    `最长连续坚持约 ${(best / 86400000).toFixed(1)} 天，当前距上次破戒 ${((Date.now() - prev) / 86400000).toFixed(1)} 天。`
   ].join('\n');
 }
 
-function buildPrompt(goal, weekRecords, range, allRecords) {
+function buildPrompt(goal, weekRecords, range, allRecords, weekDiaries) {
   const lines = [
     '你是一位温暖、专业的自律习惯教练。用户在使用一款「禁欲打卡」应用（帮助戒除不良习惯、坚持自律生活）。',
     '',
@@ -97,17 +107,21 @@ function buildPrompt(goal, weekRecords, range, allRecords) {
     buildHistorySummary(allRecords),
     goal.name ? `目标名称：${goal.name}；计划开始于 ${goal.startedAt}。` : '',
     '',
-    `== 第二部分：上一周（${range.weekLabel}）的逐条明细 ==`,
+    `== 第二部分：上一周（${range.weekLabel}）的破戒记录逐条明细 ==`,
     JSON.stringify(weekRecords),
-    '字段说明：time=发生时间(ISO)，triggers=诱因标签数组，severity=严重程度1-5，note=用户当时写下的备注原文。',
+    '字段说明：time=发生时间（北京时间 YYYY-MM-DD HH:mm），triggers=诱因标签数组，severity=严重程度1-5，note=用户当时写下的备注原文。',
     '',
-    '请结合长期摘要与本周明细，输出一份中文周报，严格使用以下结构：',
+    '== 第三部分：上一周的日记原文 ==',
+    weekDiaries.length ? JSON.stringify(weekDiaries) : '（上周未写日记）',
+    '字段说明：date=日期，mood=当天心情标记(😊开心 🙂不错 😐一般 😞低落 😫疲惫 😡烦躁)，content=用户亲笔写下的当日心情与经历。',
+    '',
+    '请结合长期摘要、本周明细与日记原文，输出一份中文周报，严格使用以下结构：',
     '【本周概览】2-3 句话总结次数与趋势',
-    '【模式洞察】时段规律、诱因关联；如备注里有情绪描述，请具体回应它',
+    '【模式洞察】时段规律、诱因关联；请把日记里的情绪线索与破戒记录相互印证（例如日记里连续的低落是否先于破戒出现）；如备注或日记里有情绪描述，请具体回应它',
     '【长期观察】结合全历史数据指出进步、恶化或反复的轨迹（如无可略写）',
     '【下周建议】3 条具体可执行的小行动，每条一行，以 · 开头',
     '',
-    '要求：语气像理解他的朋友，不说教不评判；总长不超过 400 字；直接输出内容，不要寒暄。'
+    '要求：语气像理解他的朋友，不说教不评判；总长不超过 450 字；直接输出内容，不要寒暄。'
   ];
   return lines.filter(Boolean).join('\n');
 }
@@ -137,23 +151,31 @@ async function callDeepSeek(env, prompt) {
 async function generateReportForAccount(env, code) {
   await ensureSchema(env);
   const row = await env.abstinence_db
-    .prepare('SELECT goal, relapses FROM accounts WHERE code = ?')
+    .prepare('SELECT goal, relapses, diaries FROM accounts WHERE code = ?')
     .bind(code).first();
   if (!row) throw new Error('账号不存在');
 
   let all = [];
   try { all = JSON.parse(row.relapses || '[]'); } catch (e) {}
   const goal = (() => { try { return JSON.parse(row.goal || '{}'); } catch (e) { return {}; } })();
+  let allDiaries = [];
+  try { allDiaries = JSON.parse(row.diaries || '[]'); } catch (e) {}
 
   const range = lastWeekRange();
-  const mapped = all
-    .map(r => ({ time: r.time, triggers: r.triggers || [], severity: r.severity || 0, note: r.note || '' }));
-  const weekRecords = mapped
-    .filter(r => { const t = new Date(r.time).getTime(); return t >= range.start && t < range.end; })
-    .sort((a, b) => new Date(a.time) - new Date(b.time));
+  /* 先按原始 ISO 过滤上周，再把时间转成北京时间字符串给 AI */
+  const weekRaw = all.filter(r => { const t = new Date(r.time).getTime(); return t >= range.start && t < range.end; });
+  const weekRecords = weekRaw
+    .map(r => ({ time: toBJStr(r.time), triggers: r.triggers || [], severity: r.severity || 0, note: (r.note || '').slice(0, 300) }))
+    .sort((a, b) => a.time < b.time ? -1 : 1);
+  const mapped = all.map(r => ({ time: r.time, triggers: r.triggers || [], severity: r.severity || 0, note: r.note || '' }));
+
+  const weekDiaries = allDiaries
+    .map(d => ({ date: d.date, mood: d.mood || '', content: (d.content || '').slice(0, 500) }))
+    .filter(d => { const t = new Date(d.date + 'T12:00:00+08:00').getTime(); return t >= range.start && t < range.end; })
+    .sort((a, b) => a.date < b.date ? -1 : 1);
 
   /* 上周零记录：也生成一份简短鼓励报告 */
-  const content = await callDeepSeek(env, buildPrompt(goal, weekRecords, range, mapped));
+  const content = await callDeepSeek(env, buildPrompt(goal, weekRecords, range, mapped, weekDiaries));
 
   await env.abstinence_db
     .prepare('UPDATE accounts SET ai_report = ?, ai_report_week = ? WHERE code = ?')

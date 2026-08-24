@@ -113,7 +113,15 @@
 
       <!-- ======== 视图：记录 ======== -->
       <section id="view-history" class="view">
-        <div class="list-head">
+        <div class="card" id="diaryCard">
+          <div class="list-head">
+            <span class="list-title">📝 心情日记</span>
+            <button class="chip-btn" id="btnNewDiary">✏️ 写今天</button>
+          </div>
+          <div id="diaryList" class="diary-list"></div>
+        </div>
+
+        <div class="list-head" style="margin-top:14px">
           <span class="list-title">破戒记录</span>
           <span class="list-count" id="historyCount">共 0 条</span>
         </div>
@@ -250,6 +258,23 @@
       </label>
       <div class="modal-actions">
         <button class="btn-primary" id="btnOnboard">开始</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======== 心情日记弹窗 ======== -->
+  <div class="modal-mask hidden" id="diaryModal">
+    <div class="modal">
+      <div class="modal-title">📝 心情日记</div>
+      <label class="field">
+        <span>日期</span>
+        <input type="date" id="diaryDate">
+      </label>
+      <div class="chips" id="diaryMoods"></div>
+      <textarea id="diaryContent" rows="7" maxlength="2000"
+        placeholder="今天的心情、经历、状态……想写什么都行，AI 周报会参考它更懂你"></textarea>
+      <div class="modal-actions">
+        <button class="btn-primary" id="btnDiarySave">保存日记</button>
       </div>
     </div>
   </div>

@@ -64,6 +64,7 @@ function normalizeState() {
   state.cloud.lastSyncAt = state.cloud.lastSyncAt || null;
   if (!Array.isArray(state.reportSeenKeys)) state.reportSeenKeys = []; /* 已看过周报的周标识 */
   if (!state.aiReport || typeof state.aiReport !== 'object') state.aiReport = null; /* AI 周报 {content, week} */
+  if (!Array.isArray(state.diaries)) state.diaries = []; /* 心情日记 [{id,date,mood,content,updatedAt}] */
 }
 
 /* ---------------- 工具函数 ---------------- */
@@ -576,12 +577,13 @@ async function syncNow(quiet = false) {
     if (pull && pull.ok) {
       mergeWithCloud(pull);
       if (pull.aiReport !== undefined) state.aiReport = pull.aiReport;
+      if (Array.isArray(pull.diaries)) mergeDiariesFromCloud(pull.diaries);
     }
 
     const res = await fetch(SYNC_API, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, goal: state.goal, relapses: state.relapses, deleted: state.deleted })
+      body: JSON.stringify({ code, goal: state.goal, relapses: state.relapses, diaries: state.diaries, deleted: state.deleted })
     });
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || '同步失败');
@@ -589,6 +591,7 @@ async function syncNow(quiet = false) {
     if (data.aiReport !== undefined) {
       state.aiReport = data.aiReport; /* {content, week} 或 null */
     }
+    if (Array.isArray(data.diaries)) mergeDiariesFromCloud(data.diaries);
 
     state.cloud.lastSyncAt = Date.now();
     save();
@@ -632,6 +635,95 @@ function doDisconnect() {
   save();
   renderSyncUi();
   toast('已断开云端连接（本地数据保留）');
+}
+
+/* 云端日记合并进本地（updatedAt 新者胜，剔除已删除） */
+function mergeDiariesFromCloud(cloudDiaries) {
+  const map = new Map();
+  const touch = d => {
+    if (!d || !d.id) return;
+    const ts = state.deleted[d.id];
+    if (ts != null && ts >= (d.updatedAt || 0)) return; /* 已被删除 */
+    const cur = map.get(d.id);
+    if (!cur || (d.updatedAt || 0) > (cur.updatedAt || 0)) map.set(d.id, d);
+  };
+  for (const d of state.diaries) touch(d);
+  for (const d of cloudDiaries) touch(d);
+  state.diaries = [...map.values()];
+}
+
+/* ---------------- 心情日记 ---------------- */
+
+const MOODS = ['😊', '🙂', '😐', '😞', '😫', '😡'];
+let editingDiaryId = null;
+
+function renderDiaries() {
+  const list = $('diaryList');
+  const today = toLocalInput(new Date()).slice(0, 10);
+  const btn = $('btnNewDiary');
+  const hasToday = state.diaries.some(d => d.date === today);
+  btn.textContent = hasToday ? '✏️ 编辑今天的' : '✏️ 写今天';
+
+  if (!state.diaries.length) {
+    list.innerHTML = '<div class="diary-empty">记下今天的心情和经历，AI 周报会更懂你</div>';
+    return;
+  }
+  const recent = [...state.diaries].sort((a, b) => a.date < b.date ? 1 : -1).slice(0, 15);
+  list.innerHTML = recent.map(d => {
+    const dt = new Date(d.date + 'T12:00:00');
+    const label = `${dt.getMonth() + 1}月${dt.getDate()}日`;
+    return `<div class="diary-item">
+      <div class="diary-head"><b>${d.mood || '📝'} ${label}</b>
+        <span class="hi-actions">
+          <button class="chip-btn diary-edit" data-dedit="${d.id}">编辑</button>
+          <button class="chip-btn hi-del" data-ddel="${d.id}">✕</button>
+        </span></div>
+      <div class="diary-text">${esc(d.content).replace(/\n/g, '<br>')}</div>
+    </div>`;
+  }).join('');
+}
+
+function openDiaryModal(dateStr) {
+  editingDiaryId = null;
+  const target = dateStr || toLocalInput(new Date()).slice(0, 10);
+  $('diaryDate').value = target;
+  $('diaryContent').value = '';
+  let mood = null;
+  const existing = state.diaries.find(d => d.date === target);
+  if (existing) {
+    editingDiaryId = existing.id;
+    $('diaryContent').value = existing.content;
+    mood = existing.mood || null;
+  }
+  $('diaryMoods').innerHTML = MOODS.map(m => `<button type="button" class="chip-opt${m === mood ? ' sel' : ''}" data-mood="${m}">${m}</button>`).join('');
+  $('diaryModal').classList.remove('hidden');
+}
+
+function saveDiary() {
+  const content = $('diaryContent').value.trim();
+  if (!content) { toast('写点什么再保存吧'); return; }
+  const date = $('diaryDate').value;
+  if (!date) { toast('请选择日期'); return; }
+  const moodEl = document.querySelector('#diaryMoods .chip-opt.sel');
+  const mood = moodEl ? moodEl.dataset.mood : '';
+
+  if (editingDiaryId) {
+    const rec = state.diaries.find(d => d.id === editingDiaryId);
+    if (rec) { rec.date = date; rec.mood = mood; rec.content = content; rec.updatedAt = Date.now(); }
+  } else {
+    /* 同一天已有日记则覆盖更新那篇 */
+    const existing = state.diaries.find(d => d.date === date);
+    if (existing) {
+      existing.mood = mood; existing.content = content; existing.updatedAt = Date.now();
+    } else {
+      state.diaries.push({ id: 'd' + Date.now().toString(36), date, mood, content, updatedAt: Date.now() });
+    }
+  }
+  save();
+  markDirty();
+  renderDiaries();
+  $('diaryModal').classList.add('hidden');
+  toast('日记已保存 📝');
 }
 
 /* ---------------- 每周总结（周报） ---------------- */
@@ -750,6 +842,7 @@ function reRenderAll() {
   renderHome();
   renderStats();
   renderHistory();
+  renderDiaries();
   renderSettings();
 }
 
@@ -978,6 +1071,36 @@ function bindEvents() {
 
   /* AI 分析 */
   $('btnRegenAI').addEventListener('click', regenerateAI);
+
+  /* 心情日记 */
+  $('btnNewDiary').addEventListener('click', () => openDiaryModal());
+  $('btnDiarySave').addEventListener('click', saveDiary);
+  $('diaryMoods').addEventListener('click', e => {
+    const btn = e.target.closest('[data-mood]');
+    if (!btn) return;
+    document.querySelectorAll('#diaryMoods .chip-opt').forEach(b => b.classList.remove('sel'));
+    btn.classList.add('sel');
+  });
+  $('diaryList').addEventListener('click', e => {
+    const editBtn = e.target.closest('[data-dedit]');
+    if (editBtn) {
+      const rec = state.diaries.find(d => d.id === editBtn.dataset.dedit);
+      if (rec) openDiaryModal(rec.date);
+      return;
+    }
+    const delBtn = e.target.closest('[data-ddel]');
+    if (delBtn) {
+      const rec = state.diaries.find(d => d.id === delBtn.dataset.ddel);
+      if (!rec) return;
+      if (!confirm('删除这篇日记？')) return;
+      state.diaries = state.diaries.filter(d => d.id !== rec.id);
+      state.deleted[rec.id] = Date.now();
+      save();
+      markDirty();
+      renderDiaries();
+      toast('已删除');
+    }
+  });
 
   /* 首次引导 */
   $('btnOnboard').addEventListener('click', () => {
