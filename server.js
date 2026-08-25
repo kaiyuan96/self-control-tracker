@@ -29,5 +29,5 @@ http.createServer((req, res) => {
     res.end(data);
   });
 }).listen(PORT, () => {
-  console.log(`🛡️  禁欲打卡已启动: http://localhost:${PORT}`);
+  console.log(`🛡️  自律打卡已启动: http://localhost:${PORT}`);
 });

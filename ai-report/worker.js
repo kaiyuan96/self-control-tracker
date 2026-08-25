@@ -101,7 +101,7 @@ function buildHistorySummary(allRecords) {
 
 function buildPrompt(goal, weekRecords, range, allRecords, weekDiaries, userPlans) {
   const lines = [
-    '你是一位温暖、专业的自律习惯教练。用户在使用一款「禁欲打卡」应用（帮助戒除不良习惯、坚持自律生活）。',
+    '你是一位温暖、专业的自律习惯教练。用户在使用一款「自律打卡」应用（帮助戒除不良习惯、坚持自律生活）。',
     '',
     '== 第一部分：用户的全历史统计摘要（压缩数据，用于长期视角） ==',
     buildHistorySummary(allRecords),
@@ -239,7 +239,7 @@ async function suggestPlansForAccount(env, code) {
   const existingPlans = plans.map(p => ({ if: p.ifText, then: p.thenText }));
 
   const prompt = [
-    '你是一位自律习惯教练。用户在用一款「禁欲打卡」应用，需要建立"如果-那么"执行意图预案卡来应对冲动。',
+    '你是一位自律习惯教练。用户在用一款「自律打卡」应用，需要建立"如果-那么"执行意图预案卡来应对冲动。',
     goal.name ? `目标：${goal.name}。` : '',
     `历史高频诱因：${topTf.length ? topTf.join('、') : '暂无记录'}；高危时段：${topSegs.length ? topSegs.join('、') : '暂无记录'}。`,
     existingPlans.length ? `已有预案：${JSON.stringify(existingPlans)}（新建议须与它们不同）。` : '尚无预案。',

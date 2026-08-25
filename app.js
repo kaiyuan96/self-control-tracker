@@ -1,7 +1,7 @@
 'use strict';
 
 /* ============================================================
-   禁欲打卡 · 应用逻辑
+   自律打卡 · 应用逻辑
    - 数据保存在浏览器 localStorage（离线可用）
    - 可选云端同步（访问码认证）
    ============================================================ */
@@ -23,7 +23,7 @@ function defaultState() {
   return {
     version: 2,
     onboarded: false,
-    goal: { name: '禁欲计划', startedAt: new Date().toISOString(), updatedAt: Date.now() },
+    goal: { name: '自律计划', startedAt: new Date().toISOString(), updatedAt: Date.now() },
     customTriggers: [],
     relapses: [],
     deleted: {},                       /* 已删除记录 id -> 删除时间戳（用于云同步） */
@@ -50,6 +50,8 @@ function normalizeState() {
   if (typeof state !== 'object' || !state) state = defaultState();
   if (!state.goal || typeof state.goal !== 'object') state.goal = defaultState().goal;
   if (!state.goal.updatedAt) state.goal.updatedAt = Date.now();
+  /* 旧版本默认目标名迁移为中性词 */
+  if (state.goal.name === '禁欲计划') { state.goal.name = '自律计划'; state.goal.updatedAt = Date.now(); }
   if (!Array.isArray(state.relapses)) state.relapses = [];
   state.relapses.forEach(r => {
     if (!r.updatedAt) r.updatedAt = r.createdAt ? new Date(r.createdAt).getTime() : 0;
@@ -1173,7 +1175,7 @@ function bindEvents() {
 
   /* 设置保存 */
   $('btnSaveGoal').addEventListener('click', () => {
-    const name = $('setGoalName').value.trim() || '禁欲计划';
+    const name = $('setGoalName').value.trim() || '自律计划';
     const startVal = $('setStartAt').value;
     state.goal.name = name;
     if (startVal) state.goal.startedAt = new Date(startVal).toISOString();
@@ -1343,7 +1345,7 @@ function bindEvents() {
 
   /* 首次引导 */
   $('btnOnboard').addEventListener('click', () => {
-    const name = $('obGoalName').value.trim() || '禁欲计划';
+    const name = $('obGoalName').value.trim() || '自律计划';
     const startVal = $('obStartAt').value;
     state.goal.name = name;
     if (startVal) state.goal.startedAt = new Date(startVal).toISOString();
