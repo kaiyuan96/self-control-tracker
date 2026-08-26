@@ -605,6 +605,7 @@ async function syncNow(quiet = false) {
     setSyncStatus('已连接 · 最近同步 ' + fmtDateTime(new Date(state.cloud.lastSyncAt).toISOString()));
     setSyncError('');
     reRenderAll();
+    setTimeout(checkAchievements, 600); /* 云端数据可能带来新达成的成就 */
     return true;
   } catch (e) {
     setSyncStatus(state.cloud.connected ? '已连接 · 上次同步失败' : '连接失败');
@@ -818,6 +819,82 @@ function applyReview(pair) {
   }
   $('reviewModal').classList.add('hidden');
   toast('已记录，预案会越来越准 📊');
+}
+
+/* ---------------- 成就系统 ---------------- */
+
+const ACHIEVEMENTS = [
+  { id: 'd7',   days: 7,   icon: '🌱', name: '破土而出', sub: '第一周' },
+  { id: 'd14',  days: 14,  icon: '🌿', name: '两周之约', sub: '稳步扎根' },
+  { id: 'd21',  days: 21,  icon: '🌳', name: '习惯成形', sub: '第三周' },
+  { id: 'd35',  days: 35,  icon: '🏔️', name: '五周高地', sub: '越过平台期' },
+  { id: 'd84',  days: 84,  icon: '🦋', name: '十二周蜕变', sub: '三个月 · 身份重建' },
+  { id: 'm6',   days: 183, icon: '💎', name: '半年里程碑', sub: '少数人抵达的地方' },
+  { id: 'y1',   days: 365, icon: '👑', name: '一年之约', sub: '完全不同的自己' }
+];
+const CEL_KEY = 'sc-celebrated:v1'; /* 本地 UI 状态：已庆祝过的成就（不同步） */
+
+function getCelebrated() {
+  try { return JSON.parse(localStorage.getItem(CEL_KEY) || '[]'); } catch (e) { return []; }
+}
+
+function currentStreakDays() {
+  return Math.floor((Date.now() - currentStreakStart().getTime()) / 86400000);
+}
+
+function renderAchievements() {
+  const grid = $('achGrid');
+  if (!grid) return;
+  const best = Math.floor(longestStreakMs() / 86400000);
+  const cur = currentStreakDays();
+  const cel = getCelebrated();
+
+  /* 下一目标进度 */
+  const next = ACHIEVEMENTS.find(a => a.days > best);
+  const nextEl = $('achNext');
+  if (nextEl) {
+    if (!next) {
+      nextEl.innerHTML = `👑 全部成就已解锁！历史最高连续 <b>${best}</b> 天`;
+    } else {
+      const remain = Math.max(0, next.days - cur);
+      const pct = Math.min(100, Math.round((cur / next.days) * 100));
+      nextEl.innerHTML = `
+        <div class="ach-next-text">下一个目标 <b>${next.icon} ${next.name}</b>（${next.days} 天）
+          ${remain > 0 ? `· 还差 <b>${remain}</b> 天` : ''}</div>
+        <div class="ach-bar"><div class="ach-bar-fill" style="width:${pct}%"></div></div>`;
+    }
+  }
+
+  grid.innerHTML = ACHIEVEMENTS.map(a => {
+    const unlocked = best >= a.days;
+    const progress = unlocked ? '' : `<div class="ach-progress">${Math.min(cur, a.days)}/${a.days} 天</div>`;
+    return `<div class="ach-badge ${unlocked ? 'unlocked' : 'locked'}" title="${a.name}：连续 ${a.days} 天">
+      <div class="ach-icon">${unlocked ? a.icon : '🔒'}</div>
+      <div class="ach-name">${a.name}</div>
+      <div class="ach-sub">${a.days} 天</div>
+      ${progress}
+    </div>`;
+  }).join('');
+}
+
+/* 达成时弹庆祝（本地记录已庆祝，避免重复打扰） */
+function checkAchievements() {
+  const best = Math.floor(longestStreakMs() / 86400000);
+  const cel = getCelebrated();
+  const newly = [...ACHIEVEMENTS].reverse().find(a => best >= a.days && !cel.includes(a.id));
+  if (!newly) return;
+  cel.push(newly.id);
+  try { localStorage.setItem(CEL_KEY, JSON.stringify(cel)); } catch (e) {}
+  showCelebration(newly);
+}
+
+function showCelebration(a) {
+  $('celebIcon').textContent = a.icon;
+  $('celebName').textContent = a.name;
+  $('celebSub').textContent = `${a.sub} · 连续坚持 ${a.days} 天`;
+  const cur = currentStreakDays();
+  $('celebDays').textContent = `当前这段旅程已经走了 ${cur} 天，别停下 🚀`;
+  $('celebrateModal').classList.remove('hidden');
 }
 
 /* ---------------- 心情日记 ---------------- */
@@ -1120,6 +1197,7 @@ function reRenderAll() {
   renderHistory();
   renderDiaries();
   renderPlans();
+  renderAchievements();
   renderSettings();
 }
 
@@ -1404,6 +1482,9 @@ function bindEvents() {
     if (btn) applyReview(btn.dataset.review);
   });
   $('btnReviewSkip').addEventListener('click', () => $('reviewModal').classList.add('hidden'));
+
+  /* 成就庆祝弹窗 */
+  $('btnCelebClose').addEventListener('click', () => $('celebrateModal').classList.add('hidden'));
   $('reviewModal').addEventListener('click', e => { if (e.target === $('reviewModal')) $('reviewModal').classList.add('hidden'); });
   $('btnDiarySave').addEventListener('click', saveDiary);
   $('diaryMoods').addEventListener('click', e => {
@@ -1469,10 +1550,12 @@ function init() {
   reRenderAll();
   tick();
   setInterval(tick, 1000);
+  /* 成就检查：启动后稍等（避开引导弹窗）+ 云端同步回来后数据可能更新 */
+  setTimeout(checkAchievements, state.onboarded ? 1200 : 3000);
 
-  /* 跨天时刷新静态数据 */
+  /* 跨天时刷新静态数据（连续天数增长可能解锁新成就） */
   setInterval(() => {
-    if (new Date().getDate() !== lastRenderedDate) reRenderAll();
+    if (new Date().getDate() !== lastRenderedDate) { reRenderAll(); checkAchievements(); }
   }, 60000);
 
   /* 已连接云端 → 启动时静默同步一次 */

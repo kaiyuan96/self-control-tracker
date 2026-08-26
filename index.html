@@ -58,6 +58,14 @@
           <div class="tip-body" id="tipBody"></div>
         </div>
 
+        <div class="card" id="achievementCard">
+          <div class="list-head">
+            <span class="list-title">🏆 成就 <span class="ai-meta">历史最高连续 · 破戒不清零</span></span>
+          </div>
+          <div class="ach-next" id="achNext"></div>
+          <div class="ach-grid" id="achGrid"></div>
+        </div>
+
         <div class="tip card" id="planCard" style="display:none">
           <div class="tip-title"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>预案库 <span class="ai-meta">如果-那么 · 提前决策</span></div>
           <div id="planList"></div>
@@ -329,6 +337,19 @@
       <div class="modal-actions">
         <button class="btn-primary" id="btnDiarySave">保存日记</button>
       </div>
+    </div>
+  </div>
+
+  <!-- ======== 成就庆祝弹窗 ======== -->
+  <div class="modal-mask hidden" id="celebrateModal">
+    <div class="modal celebrate">
+      <div class="celebrate-glow"></div>
+      <div class="celebrate-icon" id="celebIcon">🏆</div>
+      <div class="celebrate-tag">成就解锁</div>
+      <div class="celebrate-name" id="celebName"></div>
+      <div class="celebrate-sub" id="celebSub"></div>
+      <div class="celebrate-days" id="celebDays"></div>
+      <button class="btn-primary" id="btnCelebClose">继续前行</button>
     </div>
   </div>
 
