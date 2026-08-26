@@ -848,6 +848,33 @@ function relapsesByDay() {
   return map;
 }
 
+/* 成就统计：当前连续干净天数 + 近 30 天干净占比 */
+function cleanStats() {
+  const byDay = relapsesByDay();
+  const startKey = localDayKey(state.goal.startedAt);
+  const todayKey = toLocalInput(new Date()).slice(0, 10);
+  /* 当前连续：从今天往前数到最后一次破戒 */
+  let curStreak = 0;
+  const probe = new Date(todayKey + 'T12:00:00');
+  while (probe >= new Date(startKey + 'T12:00:00')) {
+    const k = `${probe.getFullYear()}-${String(probe.getMonth() + 1).padStart(2, '0')}-${String(probe.getDate()).padStart(2, '0')}`;
+    if (byDay[k]) break;
+    curStreak++;
+    probe.setDate(probe.getDate() - 1);
+  }
+  /* 近 30 天（不含未来）：干净天 / 应计天 */
+  let total = 0, clean = 0;
+  const p2 = new Date(todayKey + 'T12:00:00');
+  for (let i = 0; i < 30; i++) {
+    if (p2 < new Date(startKey + 'T12:00:00')) break;
+    const k = `${p2.getFullYear()}-${String(p2.getMonth() + 1).padStart(2, '0')}-${String(p2.getDate()).padStart(2, '0')}`;
+    total++;
+    if (!byDay[k]) clean++;
+    p2.setDate(p2.getDate() - 1);
+  }
+  return { curStreak, clean, total };
+}
+
 function renderDiaries() {
   const list = $('diaryList');
   const today = toLocalInput(new Date()).slice(0, 10);
@@ -859,6 +886,14 @@ function renderDiaries() {
     list.innerHTML = '<div class="diary-empty">记下今天的心情和经历，AI 周报会更懂你</div>';
     return;
   }
+
+  /* 成就统计条 */
+  const st = cleanStats();
+  const statsEl = $('timelineStats');
+  if (statsEl) {
+    statsEl.innerHTML = `🛡️ 当前已连续 <b>${st.curStreak}</b> 天零破戒 · 近 ${st.total} 天中 <b>${st.clean}</b> 天干净`;
+  }
+
   const byDay = relapsesByDay();
   /* 时间线 = 日记 ∪ 有破戒的日子，合并展示 */
   const dayKeys = new Set([
@@ -879,7 +914,8 @@ function renderDiaries() {
           const d = new Date(r.time);
           return `<div class="diary-relapse-row">${pad2(d.getHours())}:${pad2(d.getMinutes())} · ${'★'.repeat(r.severity || 0)}${(r.triggers || []).length ? ' · ' + esc(r.triggers.join('/')) : ''}${r.note ? ' · <i>' + esc(r.note) + '</i>' : ''}</div>`;
         }).join('')}
-      </div>` : '';
+      </div>` : `
+      <div class="diary-clean">✅ 这天零破戒，干净的一天</div>`;
 
     /* 日记块（可能多篇，一般一篇） */
     const diaryHtml = diaries.map(d => {
