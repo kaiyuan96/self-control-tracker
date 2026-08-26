@@ -1105,7 +1105,7 @@ function toast(msg) {
   if (!t) {
     t = document.createElement('div');
     t.id = 'toast';
-    t.style.cssText = 'position:fixed;left:50%;bottom:32px;transform:translateX(-50%);background:#232834;color:#fff;border:1px solid var(--border);padding:10px 20px;border-radius:999px;font-size:14px;z-index:999;box-shadow:0 8px 30px rgba(0,0,0,.4);opacity:0;transition:opacity .25s;pointer-events:none';
+    t.style.cssText = 'position:fixed;left:50%;bottom:32px;transform:translateX(-50%);background:rgba(22,29,50,.92);color:#eef2ff;border:1px solid rgba(139,124,255,.35);padding:11px 22px;border-radius:999px;font-size:14px;z-index:999;box-shadow:0 10px 34px rgba(2,6,20,.55),0 0 18px rgba(139,124,255,.18);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);opacity:0;transition:opacity .25s;pointer-events:none';
     document.body.appendChild(t);
   }
   t.textContent = msg;
