@@ -834,6 +834,21 @@ const ACHIEVEMENTS = [
 ];
 const CEL_KEY = 'sc-celebrated:v1'; /* 本地 UI 状态：已庆祝过的成就（不同步） */
 
+/* 阶段性身体/心理预期提醒：按当前连续天数自动切换 */
+const STAGE_TIPS = [
+  { until: 14,  icon: '⚠️', title: '冲动高峰期',    text: '头两周性冲动会明显加剧——这是大脑在"讨价还价"。冲动来袭时打开预案卡执行"如果-那么"，一般 15 分钟后会自然消退。' },
+  { until: 21,  icon: '🌤️', title: '幻想开始下降', text: '进入第三周：不受控的幻想和心痒感开始回落，注意力慢慢回到你自己手里。趁势把省下的时间投给一件具体的事。' },
+  { until: 28,  icon: '🧭', title: '靠习惯前行',    text: '新鲜感正在消退，现在靠习惯而不是热情前进。翻一翻预案复盘，把"用过有效"的预案排在最前面。' },
+  { until: 56,  icon: '🌙', title: '夜间偶有遗漏',  text: '五周前后可能出现夜间遗精——这是身体正常的自我调节，不是破戒，无需记录也无需自责。白天少憋尿、睡前放松即可减少。' },
+  { until: 83,  icon: '🌱', title: '巩固期',        text: '最难的部分已经过去。现在的任务是保持节奏：规律睡眠、别让自己长时间无聊地刷手机。' },
+  { until: 1e9, icon: '🚶', title: '动起来',        text: '十二周之后的关键词是运动：每天多散步、让身体适度疲惫，用行动置换空闲的大脑，成果会越来越稳固。' }
+];
+
+function stageTipFor(days) {
+  for (const t of STAGE_TIPS) if (days <= t.until) return t;
+  return STAGE_TIPS[STAGE_TIPS.length - 1];
+}
+
 function getCelebrated() {
   try { return JSON.parse(localStorage.getItem(CEL_KEY) || '[]'); } catch (e) { return []; }
 }
@@ -862,6 +877,14 @@ function renderAchievements() {
         <div class="ach-next-text">下一个目标 <b>${next.icon} ${next.name}</b>（${next.days} 天）
           ${remain > 0 ? `· 还差 <b>${remain}</b> 天` : ''}</div>
         <div class="ach-bar"><div class="ach-bar-fill" style="width:${pct}%"></div></div>`;
+    }
+    /* 当前阶段身体预期提醒（随连续天数自动切换） */
+    if (state.relapses.length || cur > 0) {
+      const tip = stageTipFor(cur);
+      const oldTip = nextEl.parentElement.querySelector('.stage-tip');
+      if (oldTip) oldTip.remove();
+      nextEl.insertAdjacentHTML('afterend',
+        `<div class="stage-tip"><span class="stage-tip-icon">${tip.icon}</span><span><b>${tip.title}（第 ${cur + 1} 天）</b>${tip.text}</span></div>`);
     }
   }
 
@@ -894,6 +917,12 @@ function showCelebration(a) {
   $('celebSub').textContent = `${a.sub} · 连续坚持 ${a.days} 天`;
   const cur = currentStreakDays();
   $('celebDays').textContent = `当前这段旅程已经走了 ${cur} 天，别停下 🚀`;
+  /* 下一阶段预告 */
+  const tipEl = $('celebTip');
+  if (tipEl) {
+    const tip = stageTipFor(cur + 1);
+    tipEl.innerHTML = `<span class="stage-tip-icon">${tip.icon}</span><span><b>接下来 · ${tip.title}</b>${tip.text}</span>`;
+  }
   $('celebrateModal').classList.remove('hidden');
 }
 
