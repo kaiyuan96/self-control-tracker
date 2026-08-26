@@ -409,10 +409,11 @@ function renderHistory() {
   const sorted = sortedRelapses().reverse();
   $('historyCount').textContent = `共 ${sorted.length} 条`;
   empty.style.display = sorted.length ? 'none' : 'block';
+  const diaryDays = new Set(state.diaries.map(d => (d.time || '').slice(0, 10)));
   list.innerHTML = sorted.map(r => `
     <div class="history-item">
       <div class="hi-main">
-        <div class="hi-time">⏱ ${fmtDateTime(r.time)}</div>
+        <div class="hi-time">⏱ ${fmtDateTime(r.time)}${diaryDays.has(localDayKey(r.time)) ? ' <span class="hi-diary-mark" title="这天写了心情日记">📝</span>' : ''}</div>
         ${(r.triggers || []).length ? `<div class="hi-triggers">${r.triggers.map(t => `<span class="chip">${esc(t)}</span>`).join('')}</div>` : ''}
         ${r.severity ? `<div class="hi-sev">${'★'.repeat(r.severity)}${'☆'.repeat(5 - r.severity)}</div>` : ''}
         ${r.note ? `<div class="hi-note">${esc(r.note)}</div>` : ''}
@@ -831,6 +832,22 @@ function normalizeDiary(d) {
   return d;
 }
 
+/* 任意时间 → 本地自然日 key（YYYY-MM-DD），用于日记与破戒按天关联 */
+function localDayKey(v) {
+  const d = v instanceof Date ? v : new Date(v);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/* 按天索引破戒记录：{ 'YYYY-MM-DD': [relapse...] } */
+function relapsesByDay() {
+  const map = {};
+  for (const r of state.relapses) {
+    const key = localDayKey(r.time);
+    (map[key] = map[key] || []).push(r);
+  }
+  return map;
+}
+
 function renderDiaries() {
   const list = $('diaryList');
   const today = toLocalInput(new Date()).slice(0, 10);
@@ -838,22 +855,59 @@ function renderDiaries() {
   const hasToday = state.diaries.some(d => (d.time || '').slice(0, 10) === today);
   btn.textContent = hasToday ? '✏️ 编辑今天的' : '✏️ 写今天';
 
-  if (!state.diaries.length) {
+  if (!state.diaries.length && !state.relapses.length) {
     list.innerHTML = '<div class="diary-empty">记下今天的心情和经历，AI 周报会更懂你</div>';
     return;
   }
-  const recent = [...state.diaries].sort((a, b) => (a.time || '') < (b.time || '') ? 1 : -1).slice(0, 15);
-  list.innerHTML = recent.map(d => {
-    const t = d.time || '';
-    const dt = new Date(t);
-    const label = `${dt.getMonth() + 1}月${dt.getDate()}日 ${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
-    return `<div class="diary-item">
-      <div class="diary-head"><b>${d.mood || '📝'} ${label}</b>
+  const byDay = relapsesByDay();
+  /* 时间线 = 日记 ∪ 有破戒的日子，合并展示 */
+  const dayKeys = new Set([
+    ...state.diaries.map(d => (d.time || '').slice(0, 10)),
+    ...Object.keys(byDay)
+  ]);
+  const days = [...dayKeys].sort((a, b) => a < b ? 1 : -1).slice(0, 30);
+  const pad2 = n => String(n).padStart(2, '0');
+  list.innerHTML = days.map(key => {
+    const dayRelapses = [...(byDay[key] || [])].sort((a, b) => new Date(a.time) - new Date(b.time));
+    const diaries = state.diaries.filter(d => (d.time || '').slice(0, 10) === key);
+
+    /* 破戒摘要块 */
+    const relapseHtml = dayRelapses.length ? `
+      <div class="diary-relapses">
+        <div class="relapse-badge">⚠️ 这天破戒 ${dayRelapses.length} 次</div>
+        ${dayRelapses.map(r => {
+          const d = new Date(r.time);
+          return `<div class="diary-relapse-row">${pad2(d.getHours())}:${pad2(d.getMinutes())} · ${'★'.repeat(r.severity || 0)}${(r.triggers || []).length ? ' · ' + esc(r.triggers.join('/')) : ''}${r.note ? ' · <i>' + esc(r.note) + '</i>' : ''}</div>`;
+        }).join('')}
+      </div>` : '';
+
+    /* 日记块（可能多篇，一般一篇） */
+    const diaryHtml = diaries.map(d => {
+      const t = d.time || '';
+      const dt = new Date(t);
+      const hm = `${pad2(dt.getHours())}:${pad2(dt.getMinutes())}`;
+      return `
+      <div class="diary-text-head"><span>${d.mood || '📝'} ${hm}</span>
         <span class="hi-actions">
           <button class="chip-btn diary-edit" data-dedit="${d.id}">编辑</button>
           <button class="chip-btn hi-del" data-ddel="${d.id}">✕</button>
         </span></div>
-      <div class="diary-text">${esc(d.content).replace(/\n/g, '<br>')}</div>
+      <div class="diary-text">${esc(d.content).replace(/\n/g, '<br>')}</div>`;
+    }).join('');
+
+    /* 当天无日记但有破戒 → 占位引导 */
+    const emptyDiaryHtml = !diaries.length ? `
+      <div class="diary-text-head"><span>📝 未写日记</span>
+        <span class="hi-actions"><button class="chip-btn diary-edit" data-dadd="${key}">补写这天</button></span></div>` : '';
+
+    const dt = new Date(key + 'T12:00:00');
+    const weekName = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][dt.getDay()];
+    const isToday = key === today;
+    return `<div class="diary-item">
+      <div class="diary-day">${dt.getMonth() + 1}月${dt.getDate()}日 · ${weekName}${isToday ? ' · 今天' : ''}</div>
+      ${relapseHtml}
+      ${emptyDiaryHtml}
+      ${diaryHtml}
     </div>`;
   }).join('');
 }
@@ -1326,7 +1380,12 @@ function bindEvents() {
     const editBtn = e.target.closest('[data-dedit]');
     if (editBtn) {
       const rec = state.diaries.find(d => d.id === editBtn.dataset.dedit);
-      if (rec) openDiaryModal(rec.date);
+      if (rec) openDiaryModal(rec.time.slice(0, 10));
+      return;
+    }
+    const addBtn = e.target.closest('[data-dadd]');
+    if (addBtn) {
+      openDiaryModal(addBtn.dataset.dadd);
       return;
     }
     const delBtn = e.target.closest('[data-ddel]');
