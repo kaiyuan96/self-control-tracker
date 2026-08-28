@@ -294,6 +294,14 @@
     <div class="modal">
       <div class="modal-title">开始你的自律计划 🛡️</div>
       <div class="modal-sub">设定目标，开始记录每一次坚持。</div>
+      <div class="ob-restore">
+        <button type="button" class="chip-btn" id="btnObRestore">🔑 我之前同步过，用访问码恢复数据</button>
+        <div class="ob-restore-form hidden" id="obRestoreForm">
+          <input type="text" id="obRestoreCode" placeholder="输入你的访问码（如 K7D2-9F4M）" maxlength="20" autocomplete="off">
+          <button type="button" class="btn-primary" id="btnObRestoreGo">连接并恢复</button>
+        </div>
+        <div class="ob-restore-hint hidden" id="obRestoreHint"></div>
+      </div>
       <label class="field">
         <span>目标名称</span>
         <input type="text" id="obGoalName" placeholder="例如：戒色 / 戒烟 / 戒糖…">

@@ -1622,6 +1622,45 @@ function bindEvents() {
     reRenderAll();
     toast('计划开始，加油！🛡️');
   });
+
+  /* 已有访问码 → 恢复云端数据（换设备/清缓存后找回数据） */
+  $('btnObRestore').addEventListener('click', () => {
+    $('obRestoreForm').classList.remove('hidden');
+    $('obRestoreHint').classList.add('hidden');
+    $('obRestoreCode').focus();
+  });
+  const obRestoreGo = async () => {
+    const c = $('obRestoreCode').value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (c.length < 6) { $('obRestoreHint').textContent = '访问码无效，请检查（应为 8 位字母数字）'; $('obRestoreHint').classList.remove('hidden'); return; }
+    const btn = $('btnObRestoreGo');
+    btn.disabled = true;
+    btn.textContent = '恢复中…';
+    try {
+      /* 先验证云端存在此账号，再连接同步 */
+      const res = await fetch('/api/sync?code=' + encodeURIComponent(c));
+      if (res.status === 404) throw new Error('云端没有这个访问码');
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || '云端没有这个访问码');
+      state.cloud.code = c;
+      state.cloud.connected = true;
+      state.onboarded = true;
+      save();
+      $('onboardModal').classList.add('hidden');
+      const ok = await syncNow(false); /* 拉取云端数据并合并 */
+      if (!ok) throw new Error('同步失败，请稍后重试（数据仍在你本地）');
+      reRenderAll();
+      toast('🎉 云端数据已恢复');
+    } catch (e) {
+      $('obRestoreHint').textContent = '恢复失败：' + e.message;
+      $('obRestoreHint').classList.remove('hidden');
+      if (!state.onboarded) $('onboardModal').classList.remove('hidden');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '连接并恢复';
+    }
+  };
+  $('btnObRestoreGo').addEventListener('click', obRestoreGo);
+  $('obRestoreCode').addEventListener('keydown', e => { if (e.key === 'Enter') obRestoreGo(); });
 }
 
 /* ---------------- 启动 ---------------- */
