@@ -447,6 +447,10 @@ function openUrgeModal() {
   $('urgeModal').classList.remove('hidden');
 }
 
+function closeUrgeModal() {
+  $('urgeModal').classList.add('hidden');
+}
+
 async function sendUrgeRequest() {
   const btn = $('btnUrgeSend');
   btn.disabled = true;
