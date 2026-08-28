@@ -433,6 +433,49 @@ function renderSettings() {
   renderSyncUi();
 }
 
+/* ---------------- 紧急求助（IronMind 干预） ---------------- */
+
+let urgeState = 'active_urge';
+let urgeMsg = '';
+
+function openUrgeModal() {
+  $('urgeMsg').value = '';
+  urgeMsg = '';
+  $('urgeResult').classList.add('hidden');
+  $('btnUrgeSend').disabled = false;
+  $('btnUrgeSend').textContent = '开始干预';
+  $('urgeModal').classList.remove('hidden');
+}
+
+async function sendUrgeRequest() {
+  const btn = $('btnUrgeSend');
+  btn.disabled = true;
+  btn.textContent = '干预中…';
+  const bubble = $('urgeBubble');
+  const result = $('urgeResult');
+  result.classList.remove('hidden');
+  bubble.innerHTML = '<span class="urge-thinking">正在读取你的处境…</span>';
+  try {
+    const res = await fetch('/api/help', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        code: state.cloud.code || '',
+        state: urgeState,
+        message: urgeMsg
+      })
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || '请求失败');
+    bubble.innerHTML = esc(data.reply).replace(/\n/g, '<br>');
+  } catch (e) {
+    bubble.innerHTML = `<span class="urge-err">⚠️ 请求失败：${esc(e.message)}。如果是网络问题，先试试：离开屏幕 → 喝一大杯冷水 → 做 10 个深蹲。</span>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '开始干预';
+  }
+}
+
 /* ---------------- 破戒记录弹窗 ---------------- */
 
 let selectedTriggers = [];
@@ -1247,6 +1290,24 @@ function bindEvents() {
 
   /* 破戒弹窗 */
   $('btnRelapse').addEventListener('click', openRelapseModal);
+
+  /* 紧急求助 */
+  $('btnUrgeHelp').addEventListener('click', openUrgeModal);
+  $('btnUrgeClose').addEventListener('click', closeUrgeModal);
+  $('urgeModal').addEventListener('click', e => { if (e.target === $('urgeModal')) closeUrgeModal(); });
+  $('urgeStates').addEventListener('click', e => {
+    const chip = e.target.closest('[data-state]');
+    if (!chip) return;
+    urgeState = chip.dataset.state;
+    document.querySelectorAll('#urgeStates .chip-opt').forEach(b => b.classList.remove('sel'));
+    chip.classList.add('sel');
+  });
+  $('urgeMsg').addEventListener('input', e => { urgeMsg = e.target.value.trim().slice(0, 300); });
+  $('btnUrgeSend').addEventListener('click', sendUrgeRequest);
+  $('btnUrgeAgain').addEventListener('click', () => {
+    urgeMsg = $('urgeMsg').value.trim().slice(0, 300);
+    sendUrgeRequest();
+  });
   $('btnCancelRelapse').addEventListener('click', closeRelapseModal);
   $('relapseModal').addEventListener('click', e => { if (e.target === $('relapseModal')) closeRelapseModal(); });
 

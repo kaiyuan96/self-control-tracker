@@ -130,7 +130,7 @@ function buildPrompt(goal, weekRecords, range, allRecords, weekDiaries, userPlan
   return lines.filter(Boolean).join('\n');
 }
 
-async function callDeepSeek(env, prompt) {
+async function callDeepSeek(env, prompt, maxTokens = 800) {
   if (!env.DEEPSEEK_API_KEY) throw new Error('未配置 DEEPSEEK_API_KEY');
   const res = await fetch('https://api.deepseek.com/chat/completions', {
     method: 'POST',
@@ -139,7 +139,7 @@ async function callDeepSeek(env, prompt) {
       model: 'deepseek-chat',
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.7,
-      max_tokens: 800
+      max_tokens: maxTokens
     })
   });
   if (!res.ok) {
@@ -262,6 +262,67 @@ async function suggestPlansForAccount(env, code) {
   return { suggestions };
 }
 
+/* ---------------- 紧急求助（IronMind 干预协议） ---------------- */
+
+/* 状态路由：稳定 / 预警 / 冲动正浓 / 复发后 */
+const URGE_STATES = {
+  active_urge: '冲动正浓（active_urge）——正在渴望，语气紧迫',
+  warning: '心神不宁（warning）——开始漂移，还没形成动力',
+  stable: '平静（stable）——打卡或没有紧迫感',
+  post_relapse: '刚破戒（post_relapse）——可能陷入羞耻或低落'
+};
+
+async function helpForAccount(env, code, state, message) {
+  await ensureSchema(env);
+  const row = await env.abstinence_db
+    .prepare('SELECT goal, relapses, plans FROM accounts WHERE code = ?')
+    .bind(code).first();
+  if (!row) throw new Error('账号不存在');
+
+  let all = [];
+  try { all = JSON.parse(row.relapses || '[]'); } catch (e) {}
+  const goal = (() => { try { return JSON.parse(row.goal || '{}'); } catch (e) { return {}; } })();
+  let plans = [];
+  try { plans = JSON.parse(row.plans || '[]'); } catch (e) {}
+
+  /* 当前连续与历史最长（天） */
+  const sorted = [...all].sort((a, b) => new Date(a.time) - new Date(b.time));
+  let prev = goal.startedAt ? new Date(goal.startedAt).getTime() : Date.now();
+  let best = 0;
+  for (const r of sorted) { const t = new Date(r.time).getTime(); if (t - prev > best) best = t - prev; prev = t; }
+  if (Date.now() - prev > best) best = Date.now() - prev;
+  const cur = Math.floor((Date.now() - prev) / 86400000);
+
+  /* 最近诱因与最近备注 */
+  const tf = {};
+  for (const r of all) for (const t of (r.triggers || [])) tf[t] = (tf[t] || 0) + 1;
+  const topTf = Object.entries(tf).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([t]) => t).join('、') || '暂无记录';
+  const lastNote = sorted.length ? (sorted[sorted.length - 1].note || '') : '';
+  const planBrief = plans.length
+    ? plans.slice(0, 3).map(p => `如果${p.ifText}→那么${p.thenText}`).join('；')
+    : '（尚未建立预案）';
+
+  const prompt = [
+    '你是"刚守"式的自律教练——冷静、直接、务实，正在帮用户顶住此刻的冲动。',
+    '四条铁律：①绝不让用户感到羞耻——破戒是行为数据，不是道德失败；②不说教——不要解释这个行为为什么有害，用户已经知道；③冲动状态下先给身体指令（祈使句），不是委婉建议；④语言简短直接，不做分析性长篇大论。',
+    '',
+    `用户背景：目标「${goal.name || '自律'}」；当前已连续坚持 ${cur} 天，历史最长 ${Math.floor(best / 86400000)} 天；近期诱因：${topTf}；已有预案：${planBrief}。`,
+    lastNote ? `他上一次破戒时写的备注：「${lastNote}」` : '',
+    '',
+    `当前状态：${URGE_STATES[state] || URGE_STATES.active_urge}`,
+    `用户此刻的话：${message ? '「' + message + '」' : '（没说，直接按状态协议干预）'}`,
+    '',
+    '请严格按照对应状态的协议响应（直接输出干预内容，不要解释、不要寒暄、不要加引号）：',
+    '- 冲动正浓：先给一条立刻能做的身体动作（祈使句，例如"现在离开屏幕，去喝一大杯冷水，做10个深蹲"），然后出一道需要真正动脑的题（数学计算/历史排序/逻辑推理），把注意力从冲动上拽开。总长不超过 100 字。',
+    '- 心神不宁：先用一句话点出他在漂移，再出一道需要动脑的题作重定向，最后给一个立即行动。总长不超过 100 字。',
+    '- 平静：一句简短肯定，然后问一个有用的问题（例如本周最难的一刻是什么？接下来有没有高危窗口——独处、深夜、压力日？）。不超过 60 字。',
+    '- 刚破戒：先接住他——绝不说教不评判，明确告诉他"这是一次数据点，不是判决"；然后根据他可能的心情，给一句恰当的历史人物语录（爱迪生/曼德拉/乔丹/林肯等，中文表达，不点名也可以）；最后问一句："这件事发生在几点？告诉我，我在那个时段前 30 分钟提醒你。"总长不超过 160 字。'
+  ].filter(Boolean).join('\n');
+
+  const text = await callDeepSeek(env, prompt, 500);
+  return { reply: text, state, cur, best: Math.floor(best / 86400000) };
+}
+
 export default {
   async scheduled(event, env, ctx) {
     ctx.waitUntil(runWeeklyReports(env));
@@ -269,6 +330,20 @@ export default {
   async fetch(request, env) {
     if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
     const url = new URL(request.url);
+    /* 紧急求助：POST /help body {code, state, message} */
+    if (request.method === 'POST' && url.pathname === '/help') {
+      try {
+        const body = await request.json();
+        const code = String(body.code || '').trim().toUpperCase();
+        if (!code) return json({ ok: false, error: '缺少访问码' }, 400);
+        const state = ['active_urge', 'warning', 'stable', 'post_relapse'].includes(body.state) ? body.state : 'active_urge';
+        const message = String(body.message || '').slice(0, 300);
+        const data = await helpForAccount(env, code, state, message);
+        return json({ ok: true, ...data });
+      } catch (e) {
+        return json({ ok: false, error: e.message }, 500);
+      }
+    }
     if (request.method === 'POST' && url.pathname === '/suggest') {
       try {
         const body = await request.json();

@@ -273,6 +273,55 @@ body::before {
 .last-relapse .ok { color: var(--green); }
 .last-relapse .bad { color: var(--red); }
 
+/* 求助按钮 + 气泡 */
+.hero-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.btn-urge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(77, 163, 255, 0.45);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  color: #d6e6ff;
+  background: linear-gradient(135deg, rgba(77, 163, 255, 0.16), rgba(139, 124, 255, 0.18));
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  padding: 13px 26px;
+  border-radius: 999px;
+  box-shadow: 0 10px 30px rgba(77, 120, 255, 0.28), var(--glass-highlight);
+  transition: transform 0.18s, box-shadow 0.18s, border-color 0.18s;
+}
+.btn-urge:hover {
+  transform: translateY(-2px);
+  border-color: rgba(77, 163, 255, 0.8);
+  box-shadow: 0 14px 36px rgba(77, 120, 255, 0.42);
+}
+.btn-urge:active { transform: translateY(0); }
+.urge-result { margin-top: 14px; }
+.urge-bubble {
+  background: var(--glass-2);
+  border: 1px solid rgba(77, 163, 255, 0.25);
+  border-left: 3px solid var(--accent-2);
+  border-radius: 14px;
+  padding: 14px 16px;
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  animation: fadeIn 0.3s ease;
+}
+.urge-thinking { color: var(--text-3); }
+.urge-err { color: #fda4af; }
+#urgeMsg { width: 100%; margin-top: 12px; }
+
 /* 快捷统计 */
 .quick-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; padding: 16px 12px; text-align: center; }
 .qs-num {

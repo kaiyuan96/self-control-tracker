@@ -42,7 +42,10 @@
             <div class="week-bar"><div class="week-bar-fill" id="weekBarFill"></div></div>
             <div class="week-bar-text" id="weekBarText">本周已坚持 0 天</div>
           </div>
-          <button class="btn-relapse" id="btnRelapse"><svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>我破戒了</button>
+          <div class="hero-actions">
+            <button class="btn-relapse" id="btnRelapse"><svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>我破戒了</button>
+            <button class="btn-urge" id="btnUrgeHelp"><svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2Z"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>扛不住了，找 AI</button>
+          </div>
           <div class="last-relapse" id="lastRelapse"></div>
         </div>
 
@@ -213,6 +216,31 @@
       </section>
 
     </main>
+  </div>
+
+  <!-- ======== 紧急求助弹窗 ======== -->
+  <div class="modal-mask hidden" id="urgeModal">
+    <div class="modal">
+      <button class="modal-close" id="btnUrgeClose" aria-label="关闭">✕</button>
+      <div class="modal-title">🆘 扛不住了？我在</div>
+      <div class="modal-sub">告诉我你现在的状态，AI 会按你的处境给出立刻能做的干预——不评判，只说现在怎么办。</div>
+      <div class="chips" id="urgeStates">
+        <button type="button" class="chip-opt sel" data-state="active_urge">🔥 冲动正浓</button>
+        <button type="button" class="chip-opt" data-state="warning">🌊 心神不宁</button>
+        <button type="button" class="chip-opt" data-state="post_relapse">😔 刚破戒</button>
+        <button type="button" class="chip-opt" data-state="stable">✅ 平静打卡</button>
+      </div>
+      <textarea id="urgeMsg" rows="2" placeholder="此刻在想什么？越具体越好（可不填）"></textarea>
+      <div class="modal-actions">
+        <button class="btn-primary" id="btnUrgeSend">开始干预</button>
+      </div>
+      <div class="urge-result hidden" id="urgeResult">
+        <div class="urge-bubble" id="urgeBubble"></div>
+        <div class="modal-actions">
+          <button class="chip-btn" id="btnUrgeAgain">🔄 换一种应对</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- ======== 破戒记录弹窗 ======== -->
