@@ -275,7 +275,7 @@ const URGE_STATES = {
 async function helpForAccount(env, code, state, message) {
   await ensureSchema(env);
   const row = await env.abstinence_db
-    .prepare('SELECT goal, relapses, plans FROM accounts WHERE code = ?')
+    .prepare('SELECT goal, relapses, plans, diaries FROM accounts WHERE code = ?')
     .bind(code).first();
   if (!row) throw new Error('账号不存在');
 
@@ -284,6 +284,8 @@ async function helpForAccount(env, code, state, message) {
   const goal = (() => { try { return JSON.parse(row.goal || '{}'); } catch (e) { return {}; } })();
   let plans = [];
   try { plans = JSON.parse(row.plans || '[]'); } catch (e) {}
+  let diaries = [];
+  try { diaries = JSON.parse(row.diaries || '[]'); } catch (e) {}
 
   /* 当前连续与历史最长（天） */
   const sorted = [...all].sort((a, b) => new Date(a.time) - new Date(b.time));
@@ -293,33 +295,55 @@ async function helpForAccount(env, code, state, message) {
   if (Date.now() - prev > best) best = Date.now() - prev;
   const cur = Math.floor((Date.now() - prev) / 86400000);
 
-  /* 最近诱因与最近备注 */
+  /* 最近诱因 */
   const tf = {};
   for (const r of all) for (const t of (r.triggers || [])) tf[t] = (tf[t] || 0) + 1;
   const topTf = Object.entries(tf).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([t]) => t).join('、') || '暂无记录';
-  const lastNote = sorted.length ? (sorted[sorted.length - 1].note || '') : '';
+
+  /* 最近 3 次破戒完整明细（北京时间，含诱因+备注） */
+  const recentRelapses = sorted.slice(-3).reverse().map(r =>
+    `${toBJStr(r.time)} 严重度${r.severity || '?'} 诱因[${(r.triggers || []).join(',') || '未填'}]${r.note ? ' 备注「' + r.note + '」' : ''}`
+  ).join('\n') || '（还没有破戒记录）';
+
+  /* 最近 3 篇日记（情绪 + 内容） */
+  const recentDiaries = [...diaries].sort((a, b) => (a.time || '') < (b.time || '') ? 1 : -1).slice(0, 3).map(d =>
+    `${(d.time || '').slice(0, 16).replace('T', ' ')} ${d.mood || ''}「${(d.content || '').slice(0, 60)}」`
+  ).join('\n') || '（还没写日记）';
+
   const planBrief = plans.length
     ? plans.slice(0, 3).map(p => `如果${p.ifText}→那么${p.thenText}`).join('；')
     : '（尚未建立预案）';
 
   const prompt = [
-    '你是"刚守"式的自律教练——冷静、直接、务实，正在帮用户顶住此刻的冲动。',
-    '四条铁律：①绝不让用户感到羞耻——破戒是行为数据，不是道德失败；②不说教——不要解释这个行为为什么有害，用户已经知道；③冲动状态下先给身体指令（祈使句），不是委婉建议；④语言简短直接，不做分析性长篇大论。',
+    '你是"刚守"式的自律教练——温暖、直接、务实。用户正处在戒除不良习惯的关键时刻，此刻 ta 需要的不是冷冰冰的方案，而是先被看见、再被拉一把。',
+    '四条铁律：①绝不让用户感到羞耻——破戒是行为数据，不是道德失败；②不说教——不要解释这个行为为什么有害；③冲动状态下给身体指令用祈使句；④语言简短，别写成小作文。',
     '',
-    `用户背景：目标「${goal.name || '自律'}」；当前已连续坚持 ${cur} 天，历史最长 ${Math.floor(best / 86400000)} 天；近期诱因：${topTf}；已有预案：${planBrief}。`,
-    lastNote ? `他上一次破戒时写的备注：「${lastNote}」` : '',
+    '== 用户的历史数据（用于个性化共情，务必引用） ==',
+    `目标「${goal.name || '自律'}」；当前已连续坚持 ${cur} 天，历史最长 ${Math.floor(best / 86400000)} 天。`,
+    `近期高频诱因：${topTf}。`,
+    `最近破戒记录（北京时间）：\n${recentRelapses}`,
+    `最近的日记心情：\n${recentDiaries}`,
+    `已有预案：${planBrief}。`,
     '',
     `当前状态：${URGE_STATES[state] || URGE_STATES.active_urge}`,
-    `用户此刻的话：${message ? '「' + message + '」' : '（没说，直接按状态协议干预）'}`,
+    `用户此刻说的话：${message ? '「' + message + '」' : '（ta 没说话，请根据最近日记的情绪和最近破戒的时段推断 ta 此刻的可能状态）'}`,
     '',
-    '请严格按照对应状态的协议响应（直接输出干预内容，不要解释、不要寒暄、不要加引号）：',
-    '- 冲动正浓：先给一条立刻能做的身体动作（祈使句，例如"现在离开屏幕，去喝一大杯冷水，做10个深蹲"），然后出一道需要真正动脑的题（数学计算/历史排序/逻辑推理），把注意力从冲动上拽开。总长不超过 100 字。',
-    '- 心神不宁：先用一句话点出他在漂移，再出一道需要动脑的题作重定向，最后给一个立即行动。总长不超过 100 字。',
-    '- 平静：一句简短肯定，然后问一个有用的问题（例如本周最难的一刻是什么？接下来有没有高危窗口——独处、深夜、压力日？）。不超过 60 字。',
-    '- 刚破戒：先接住他——绝不说教不评判，明确告诉他"这是一次数据点，不是判决"；然后根据他可能的心情，给一句恰当的历史人物语录（爱迪生/曼德拉/乔丹/林肯等，中文表达，不点名也可以）；最后问一句："这件事发生在几点？告诉我，我在那个时段前 30 分钟提醒你。"总长不超过 160 字。'
+    '== 响应结构（务必严格遵循） ==',
+    '第一步【共情 · 所有状态都要先做】：用 1-2 句话让 ta 感到"你看见了我"。要同时做到两点：',
+    '  ① 呼应用户此刻说的话/情绪（若没说，就结合最近日记里的低落、疲惫、烦躁等情绪）；',
+    '  ② 引用 ta 的一条具体数据建立联系（例如"你上次是在凌晨 3 点失眠时破戒的，现在又是深夜，难怪这么难熬"，或"你昨天日记写自己特别疲惫——疲惫正是意志力最容易失守的时候"，或"你已经走到过 21 天，说明你完全有这个能力"）。',
+    '  禁止说空泛的"我理解你的感受"——必须落到 ta 自己的具体细节上。',
+    '',
+    '第二步【按状态给行动】：',
+    '- 冲动正浓：共情后立刻给一条身体动作（祈使句，如"现在离开屏幕，去喝一大杯冷水，做 10 个深蹲"），再出一道需要真正动脑的题（数学/历史排序/逻辑推理）把注意力拽开。',
+    '- 心神不宁：共情后点出 ta 在漂移，出一道动脑的题，最后给一个立即行动。',
+    '- 平静：共情后简短肯定，问一个有用的问题（本周最难的一刻？接下来有没有高危窗口？）。',
+    '- 刚破戒：共情后明确告诉 ta"这是一次数据点，不是判决"（结合历史最长连续说，如"你曾连续 21 天，那不是运气"）；再给一句贴合 ta 情绪的历史人物语录（爱迪生/曼德拉/乔丹/林肯等，中文表达）；最后问"这件事发生在几点？告诉我，我在那个时段前提醒你。"',
+    '',
+    '整体要求：直接输出内容，不要解释你在做什么、不要加引号标题；总长不超过 220 字；语气像懂 ta 的朋友，温暖但不煽情。'
   ].filter(Boolean).join('\n');
 
-  const text = await callDeepSeek(env, prompt, 500);
+  const text = await callDeepSeek(env, prompt, 600);
   return { reply: text, state, cur, best: Math.floor(best / 86400000) };
 }
 
