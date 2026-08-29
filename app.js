@@ -439,11 +439,16 @@ function renderSettings() {
 
 let urgeState = 'active_urge';
 let urgeMsg = '';
+let urgeHistory = []; /* 本次求助会话的对话历史 [{role:'user'|'assistant', content}] */
+let lastUrgeReply = '';
 
 function openUrgeModal() {
   $('urgeMsg').value = '';
   urgeMsg = '';
+  urgeHistory = [];
+  lastUrgeReply = '';
   $('urgeResult').classList.add('hidden');
+  $('urgeFollowInput').value = '';
   $('btnUrgeSend').disabled = false;
   $('btnUrgeSend').textContent = '开始干预';
   $('urgeModal').classList.remove('hidden');
@@ -453,44 +458,69 @@ function closeUrgeModal() {
   $('urgeModal').classList.add('hidden');
 }
 
-async function sendUrgeRequest() {
-  const btn = $('btnUrgeSend');
-  btn.disabled = true;
-  btn.textContent = '干预中…';
-  const bubble = $('urgeBubble');
-  const result = $('urgeResult');
-  result.classList.remove('hidden');
-  bubble.innerHTML = '<span class="urge-thinking">正在读取你的处境…</span>';
-  try {
-    const res = await fetch('/api/help', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        code: state.cloud.code || '',
-        state: urgeState,
-        message: urgeMsg
-      })
-    });
-    const data = await res.json();
-    if (!data.ok) throw new Error(data.error || '请求失败');
-    bubble.innerHTML = esc(data.reply).replace(/\n/g, '<br>');
-    /* 自动保存 AI 干预记录，供时间线与导出查看 */
+/* 调用求助接口 + 存一条干预记录 */
+async function callHelp(payload, saveRecord) {
+  const res = await fetch('/api/help', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error || '请求失败');
+  lastUrgeReply = data.reply;
+  $('urgeBubble').innerHTML = esc(data.reply).replace(/\n/g, '<br>');
+  if (saveRecord) {
     state.helps.push({
       id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
       time: new Date().toISOString(),
       state: urgeState,
-      message: urgeMsg,
+      message: payload.message || '',
       reply: data.reply,
       updatedAt: Date.now()
     });
     save();
     markDirty();
     renderDiaries();
+  }
+}
+
+async function sendUrgeRequest() {
+  const btn = $('btnUrgeSend');
+  btn.disabled = true;
+  btn.textContent = '干预中…';
+  const result = $('urgeResult');
+  result.classList.remove('hidden');
+  $('urgeBubble').innerHTML = '<span class="urge-thinking">正在读取你的处境…</span>';
+  try {
+    await callHelp({ code: state.cloud.code || '', state: urgeState, message: urgeMsg, history: [] }, true);
   } catch (e) {
-    bubble.innerHTML = `<span class="urge-err">⚠️ 请求失败：${esc(e.message)}。如果是网络问题，先试试：离开屏幕 → 喝一大杯冷水 → 做 10 个深蹲。</span>`;
+    $('urgeBubble').innerHTML = `<span class="urge-err">⚠️ 请求失败：${esc(e.message)}。如果是网络问题，先试试：离开屏幕 → 喝一大杯冷水 → 做 10 个深蹲。</span>`;
   } finally {
     btn.disabled = false;
     btn.textContent = '开始干预';
+  }
+}
+
+/* 追问：把前一轮对话带上，继续多轮干预 */
+async function followUrge() {
+  const txt = $('urgeFollowInput').value.trim();
+  if (!txt) return;
+  if (!lastUrgeReply) return;
+  urgeHistory.push({ role: 'user', content: urgeMsg || '' });
+  urgeHistory.push({ role: 'assistant', content: lastUrgeReply });
+  urgeMsg = txt; /* 本轮用户说的话 */
+  $('urgeFollowInput').value = '';
+  const followBtn = $('btnUrgeFollow');
+  followBtn.disabled = true;
+  followBtn.textContent = '回复中…';
+  $('urgeBubble').innerHTML = '<span class="urge-thinking">正在接上你的话…</span>';
+  try {
+    await callHelp({ code: state.cloud.code || '', state: urgeState, message: txt, history: urgeHistory }, true);
+  } catch (e) {
+    $('urgeBubble').innerHTML = `<span class="urge-err">⚠️ 请求失败：${esc(e.message)}</span>`;
+  } finally {
+    followBtn.disabled = false;
+    followBtn.textContent = '发送';
   }
 }
 
@@ -1357,8 +1387,11 @@ function bindEvents() {
   $('btnUrgeSend').addEventListener('click', sendUrgeRequest);
   $('btnUrgeAgain').addEventListener('click', () => {
     urgeMsg = $('urgeMsg').value.trim().slice(0, 300);
+    urgeHistory = []; /* 换一种应对 = 重新开始 */
     sendUrgeRequest();
   });
+  $('btnUrgeFollow').addEventListener('click', followUrge);
+  $('urgeFollowInput').addEventListener('keydown', e => { if (e.key === 'Enter') followUrge(); });
   $('btnCancelRelapse').addEventListener('click', closeRelapseModal);
   $('relapseModal').addEventListener('click', e => { if (e.target === $('relapseModal')) closeRelapseModal(); });
 

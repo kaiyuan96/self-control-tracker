@@ -321,6 +321,20 @@ body::before {
 .urge-thinking { color: var(--text-3); }
 .urge-err { color: #fda4af; }
 #urgeMsg { width: 100%; margin-top: 12px; }
+.urge-follow { display: flex; gap: 8px; margin-top: 12px; }
+.urge-follow input {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  padding: 9px 13px;
+  outline: none;
+  transition: border-color 0.18s;
+}
+.urge-follow input:focus { border-color: var(--accent-2); }
 
 /* 快捷统计 */
 .quick-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; padding: 16px 12px; text-align: center; }
