@@ -663,6 +663,16 @@ body::before {
   display: inline-block;
   margin-bottom: 2px;
 }
+.diary-help {
+  background: rgba(77, 163, 255, 0.07);
+  border: 1px solid rgba(77, 163, 255, 0.22);
+  border-radius: 11px;
+  padding: 9px 11px;
+  margin-top: 8px;
+}
+.diary-help-head { font-size: 12px; color: var(--accent-2); font-weight: 700; margin-bottom: 4px; }
+.diary-help-msg { font-size: 12px; color: var(--text-3); margin-bottom: 5px; word-break: break-word; }
+.diary-help-reply { font-size: 13px; color: var(--text-2); line-height: 1.75; word-break: break-word; }
 
 /* 弹窗内 textarea */
 #diaryModal textarea, .modal textarea {

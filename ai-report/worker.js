@@ -27,11 +27,12 @@ function ensureSchema(env) {
       .prepare(
         'CREATE TABLE IF NOT EXISTS accounts (' +
         'code TEXT PRIMARY KEY, goal TEXT, relapses TEXT, deleted TEXT, updated_at INTEGER, ' +
-        'ai_report TEXT, ai_report_week TEXT, diaries TEXT, plans TEXT)'
+        'ai_report TEXT, ai_report_week TEXT, diaries TEXT, plans TEXT, helps TEXT)'
       )
       .run()
-      .then(() => true)
-      .catch(e => { schemaReady = null; throw e; });
+      .then(() => env.abstinence_db.prepare('ALTER TABLE accounts ADD COLUMN helps TEXT').run())
+      .catch(() => {})
+      .then(() => true);
   }
   return schemaReady;
 }

@@ -27,6 +27,7 @@ function defaultState() {
     customTriggers: [],
     relapses: [],
     deleted: {},                       /* 已删除记录 id -> 删除时间戳（用于云同步） */
+    helps: [],                         /* AI 干预记录 [{id,time,state,message,reply,updatedAt}] */
     cloud: { code: '', connected: false, lastSyncAt: null }
   };
 }
@@ -69,6 +70,7 @@ function normalizeState() {
   if (!Array.isArray(state.diaries)) state.diaries = []; /* 心情日记 [{id,time,mood,content,updatedAt}] */
   state.diaries = state.diaries.map(normalizeDiary);
   if (!Array.isArray(state.plans)) state.plans = []; /* 预案卡 [{id,ifText,thenText,source,createdAt,updatedAt,used,missed}] */
+  if (!Array.isArray(state.helps)) state.helps = []; /* AI 干预记录 [{id,time,state,message,reply,updatedAt}] */
 }
 
 /* ---------------- 工具函数 ---------------- */
@@ -472,6 +474,18 @@ async function sendUrgeRequest() {
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || '请求失败');
     bubble.innerHTML = esc(data.reply).replace(/\n/g, '<br>');
+    /* 自动保存 AI 干预记录，供时间线与导出查看 */
+    state.helps.push({
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+      time: new Date().toISOString(),
+      state: urgeState,
+      message: urgeMsg,
+      reply: data.reply,
+      updatedAt: Date.now()
+    });
+    save();
+    markDirty();
+    renderDiaries();
   } catch (e) {
     bubble.innerHTML = `<span class="urge-err">⚠️ 请求失败：${esc(e.message)}。如果是网络问题，先试试：离开屏幕 → 喝一大杯冷水 → 做 10 个深蹲。</span>`;
   } finally {
@@ -631,12 +645,13 @@ async function syncNow(quiet = false) {
       if (pull.aiReport !== undefined) state.aiReport = pull.aiReport;
       if (Array.isArray(pull.diaries)) mergeDiariesFromCloud(pull.diaries);
       if (Array.isArray(pull.plans)) mergePlansFromCloud(pull.plans);
+      if (Array.isArray(pull.helps)) mergeHelpsFromCloud(pull.helps);
     }
 
     const res = await fetch(SYNC_API, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, goal: state.goal, relapses: state.relapses, diaries: state.diaries, plans: state.plans, deleted: state.deleted })
+      body: JSON.stringify({ code, goal: state.goal, relapses: state.relapses, diaries: state.diaries, plans: state.plans, helps: state.helps, deleted: state.deleted })
     });
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || '同步失败');
@@ -646,6 +661,7 @@ async function syncNow(quiet = false) {
     }
     if (Array.isArray(data.diaries)) mergeDiariesFromCloud(data.diaries);
     if (Array.isArray(data.plans)) mergePlansFromCloud(data.plans);
+    if (Array.isArray(data.helps)) mergeHelpsFromCloud(data.helps);
 
     state.cloud.lastSyncAt = Date.now();
     save();
@@ -722,6 +738,22 @@ function mergePlansFromCloud(cloudPlans) {
   for (const p of state.plans) touch(p);
   for (const p of cloudPlans) touch(p);
   state.plans = [...map.values()];
+}
+
+/* 云端 AI 干预记录合并进本地 */
+function mergeHelpsFromCloud(cloudHelps) {
+  const map = new Map();
+  const touch = raw => {
+    const h = raw && typeof raw === 'object' ? raw : null;
+    if (!h || !h.id) return;
+    const ts = state.deleted[h.id];
+    if (ts != null && ts >= (h.updatedAt || 0)) return;
+    const cur = map.get(h.id);
+    if (!cur || (h.updatedAt || 0) > (cur.updatedAt || 0)) map.set(h.id, h);
+  };
+  for (const h of state.helps) touch(h);
+  for (const h of cloudHelps) touch(h);
+  state.helps = [...map.values()];
 }
 
 /* ---------------- 预案卡（如果-那么） ---------------- */
@@ -1035,7 +1067,7 @@ function renderDiaries() {
   const hasToday = state.diaries.some(d => (d.time || '').slice(0, 10) === today);
   btn.textContent = hasToday ? '✏️ 编辑今天的' : '✏️ 写今天';
 
-  if (!state.diaries.length && !state.relapses.length) {
+  if (!state.diaries.length && !state.relapses.length && !state.helps.length) {
     list.innerHTML = '<div class="diary-empty">记下今天的心情和经历，AI 周报会更懂你</div>';
     return;
   }
@@ -1048,9 +1080,11 @@ function renderDiaries() {
   }
 
   const byDay = relapsesByDay();
-  /* 时间线 = 日记 ∪ 有破戒的日子，合并展示 */
+  /* 时间线 = 日记 ∪ 有破戒的日子 ∪ 有 AI 干预的日子，合并展示 */
+  const HELP_ICONS = { active_urge: '🔥', warning: '🌊', post_relapse: '😔', stable: '✅' };
   const dayKeys = new Set([
     ...state.diaries.map(d => (d.time || '').slice(0, 10)),
+    ...state.helps.map(h => (h.time || '').slice(0, 10)),
     ...Object.keys(byDay)
   ]);
   const days = [...dayKeys].sort((a, b) => a < b ? 1 : -1).slice(0, 30);
@@ -1058,6 +1092,7 @@ function renderDiaries() {
   list.innerHTML = days.map(key => {
     const dayRelapses = [...(byDay[key] || [])].sort((a, b) => new Date(a.time) - new Date(b.time));
     const diaries = state.diaries.filter(d => (d.time || '').slice(0, 10) === key);
+    const dayHelps = state.helps.filter(h => (h.time || '').slice(0, 10) === key).sort((a, b) => new Date(a.time) - new Date(b.time));
 
     /* 破戒摘要块 */
     const relapseHtml = dayRelapses.length ? `
@@ -1089,6 +1124,17 @@ function renderDiaries() {
       <div class="diary-text-head"><span>📝 未写日记</span>
         <span class="hi-actions"><button class="chip-btn diary-edit" data-dadd="${key}">补写这天</button></span></div>` : '';
 
+    /* AI 干预记录块 */
+    const helpHtml = dayHelps.map(h => {
+      const hd = new Date(h.time);
+      const hm = `${pad2(hd.getHours())}:${pad2(hd.getMinutes())}`;
+      return `<div class="diary-help">
+        <div class="diary-help-head">${HELP_ICONS[h.state] || '🆘'} ${hm} 求助 AI 干预</div>
+        ${h.message ? `<div class="diary-help-msg">「${esc(h.message)}」</div>` : ''}
+        <div class="diary-help-reply">${esc(h.reply).replace(/\n/g, '<br>')}</div>
+      </div>`;
+    }).join('');
+
     const dt = new Date(key + 'T12:00:00');
     const weekName = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][dt.getDay()];
     const isToday = key === today;
@@ -1097,6 +1143,7 @@ function renderDiaries() {
       ${relapseHtml}
       ${emptyDiaryHtml}
       ${diaryHtml}
+      ${helpHtml}
     </div>`;
   }).join('');
 }
@@ -1450,13 +1497,21 @@ function bindEvents() {
 
   /* 导出 */
   $('btnExport').addEventListener('click', () => {
-    const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+    /* 导出时额外生成一个按时间排序的统一时间线，一目了然 */
+    const HELP_STATE_NAMES = { active_urge: '冲动正浓', warning: '心神不宁', post_relapse: '刚破戒', stable: '平静' };
+    const timeline = [
+      ...state.relapses.map(r => ({ type: '破戒', time: r.time, triggers: r.triggers, severity: r.severity, note: r.note })),
+      ...state.diaries.map(d => ({ type: '日记', time: d.time, mood: d.mood, content: d.content })),
+      ...state.helps.map(h => ({ type: 'AI干预', time: h.time, state: HELP_STATE_NAMES[h.state] || h.state, message: h.message, reply: h.reply }))
+    ].sort((a, b) => new Date(a.time) - new Date(b.time));
+    const payload = { ...state, timeline };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = `abstinence-backup-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(a.href);
-    toast('已导出备份文件');
+    toast('已导出备份文件（含统一时间线）');
   });
 
   /* 导入 */

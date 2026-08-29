@@ -60,11 +60,12 @@ function ensureSchema(env) {
       .prepare(
         'CREATE TABLE IF NOT EXISTS accounts (' +
         'code TEXT PRIMARY KEY, goal TEXT, relapses TEXT, deleted TEXT, updated_at INTEGER, ' +
-        'ai_report TEXT, ai_report_week TEXT, diaries TEXT, plans TEXT)'
+        'ai_report TEXT, ai_report_week TEXT, diaries TEXT, plans TEXT, helps TEXT)'
       )
       .run()
-      .then(() => true)
-      .catch(e => { schemaReady = null; throw e; });
+      .then(() => env.abstinence_db.prepare('ALTER TABLE accounts ADD COLUMN helps TEXT').run())
+      .catch(() => {}) /* helps 列已存在时忽略 */
+      .then(() => true);
   }
   return schemaReady;
 }
@@ -78,7 +79,7 @@ async function handleSync(request, env) {
       const code = (url.searchParams.get('code') || '').trim().toUpperCase();
       if (!code) return json({ ok: false, error: '缺少访问码' }, 400);
       const row = await env.abstinence_db
-        .prepare('SELECT goal, relapses, deleted, ai_report, ai_report_week, diaries, plans FROM accounts WHERE code = ?')
+        .prepare('SELECT goal, relapses, deleted, ai_report, ai_report_week, diaries, plans, helps FROM accounts WHERE code = ?')
         .bind(code).first();
       if (!row) return json({ ok: false, error: '访问码不存在' }, 404);
       const relapses = JSON.parse(row.relapses || '[]');
@@ -87,6 +88,8 @@ async function handleSync(request, env) {
       try { diaries = applyDeleted(JSON.parse(row.diaries || '[]'), deleted); } catch (e) {}
       let plans = [];
       try { plans = applyDeleted(JSON.parse(row.plans || '[]'), deleted); } catch (e) {}
+      let helps = [];
+      try { helps = applyDeleted(JSON.parse(row.helps || '[]'), deleted); } catch (e) {}
       return json({
         ok: true,
         goal: JSON.parse(row.goal),
@@ -94,6 +97,7 @@ async function handleSync(request, env) {
         deleted,
         diaries,
         plans,
+        helps,
         aiReport: row.ai_report ? { content: row.ai_report, week: row.ai_report_week || '' } : null,
         serverTime: Date.now()
       });
@@ -108,12 +112,13 @@ async function handleSync(request, env) {
       const clientRelapses = Array.isArray(body.relapses) ? body.relapses : [];
       const clientDiaries = Array.isArray(body.diaries) ? body.diaries : [];
       const clientPlans = Array.isArray(body.plans) ? body.plans : [];
+      const clientHelps = Array.isArray(body.helps) ? body.helps : [];
       const clientDeleted = body.deleted || {};
       const row = await env.abstinence_db
-        .prepare('SELECT goal, relapses, deleted, diaries, plans FROM accounts WHERE code = ?')
+        .prepare('SELECT goal, relapses, deleted, diaries, plans, helps FROM accounts WHERE code = ?')
         .bind(code).first();
 
-      let mergedGoal, mergedRelapses, mergedDeleted, mergedDiaries, mergedPlans;
+      let mergedGoal, mergedRelapses, mergedDeleted, mergedDiaries, mergedPlans, mergedHelps;
 
       if (row) {
         const serverGoal = JSON.parse(row.goal);
@@ -123,6 +128,8 @@ async function handleSync(request, env) {
         try { serverDiaries = JSON.parse(row.diaries || '[]'); } catch (e) {}
         let serverPlans = [];
         try { serverPlans = JSON.parse(row.plans || '[]'); } catch (e) {}
+        let serverHelps = [];
+        try { serverHelps = JSON.parse(row.helps || '[]'); } catch (e) {}
         mergedGoal = !clientGoal ? serverGoal
           : !serverGoal ? clientGoal
           : (clientGoal.updatedAt || 0) >= (serverGoal.updatedAt || 0) ? clientGoal : serverGoal;
@@ -130,12 +137,14 @@ async function handleSync(request, env) {
         mergedRelapses = applyDeleted(mergeRecords(clientRelapses, serverRelapses), allDeleted);
         mergedDiaries = applyDeleted(mergeRecords(clientDiaries, serverDiaries), allDeleted);
         mergedPlans = applyDeleted(mergeRecords(clientPlans, serverPlans), allDeleted);
+        mergedHelps = applyDeleted(mergeRecords(clientHelps, serverHelps), allDeleted);
         mergedDeleted = allDeleted;
       } else {
         mergedGoal = clientGoal;
         mergedRelapses = clientRelapses;
         mergedDiaries = clientDiaries;
         mergedPlans = clientPlans;
+        mergedHelps = clientHelps;
         mergedDeleted = mergeDeleted(clientDeleted, {});
         mergedRelapses = applyDeleted(mergedRelapses, mergedDeleted);
       }
@@ -143,10 +152,10 @@ async function handleSync(request, env) {
       const now = Date.now();
       await env.abstinence_db
         .prepare(
-          'INSERT INTO accounts (code, goal, relapses, deleted, updated_at, diaries, plans) VALUES (?, ?, ?, ?, ?, ?, ?) ' +
-          'ON CONFLICT(code) DO UPDATE SET goal = excluded.goal, relapses = excluded.relapses, deleted = excluded.deleted, updated_at = excluded.updated_at, diaries = excluded.diaries, plans = excluded.plans'
+          'INSERT INTO accounts (code, goal, relapses, deleted, updated_at, diaries, plans, helps) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ' +
+          'ON CONFLICT(code) DO UPDATE SET goal = excluded.goal, relapses = excluded.relapses, deleted = excluded.deleted, updated_at = excluded.updated_at, diaries = excluded.diaries, plans = excluded.plans, helps = excluded.helps'
         )
-        .bind(code, JSON.stringify(mergedGoal), JSON.stringify(mergedRelapses), JSON.stringify(mergedDeleted), now, JSON.stringify(mergedDiaries), JSON.stringify(mergedPlans))
+        .bind(code, JSON.stringify(mergedGoal), JSON.stringify(mergedRelapses), JSON.stringify(mergedDeleted), now, JSON.stringify(mergedDiaries), JSON.stringify(mergedPlans), JSON.stringify(mergedHelps))
         .run();
 
       /* 回传最新 AI 报告（如有），客户端同步时一并拿到 */
@@ -161,6 +170,7 @@ async function handleSync(request, env) {
         deleted: mergedDeleted,
         diaries: mergedDiaries,
         plans: mergedPlans,
+        helps: mergedHelps,
         aiReport: after && after.ai_report ? { content: after.ai_report, week: after.ai_report_week || '' } : null,
         serverTime: now
       });
