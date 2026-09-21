@@ -46,6 +46,12 @@ function save() {
 let state = load();
 if (!state) { state = defaultState(); save(); }
 
+/* 底线规则：默认两条（用户可编辑） */
+const DEFAULT_RULES = [
+  { id: 'rule-default-1', text: '只有生理反应强烈到难受到不行才可以，绝不自己摸硬、绝不用色情内容主动启动。' },
+  { id: 'rule-default-2', text: '想自慰时，先等十五分钟再做决定——冲动会在几分钟内自己退下去。' }
+];
+
 /* 兼容旧版本数据：补齐新增字段 */
 function normalizeState() {
   if (typeof state !== 'object' || !state) state = defaultState();
@@ -71,6 +77,7 @@ function normalizeState() {
   state.diaries = state.diaries.map(normalizeDiary);
   if (!Array.isArray(state.plans)) state.plans = []; /* 预案卡 [{id,ifText,thenText,source,createdAt,updatedAt,used,missed}] */
   if (!Array.isArray(state.helps)) state.helps = []; /* AI 干预记录 [{id,time,state,message,reply,updatedAt}] */
+  if (!Array.isArray(state.goal.rules)) state.goal.rules = DEFAULT_RULES.map(r => ({ ...r })); /* 底线规则 */
 }
 
 /* ---------------- 工具函数 ---------------- */
@@ -315,13 +322,34 @@ function renderStats() {
 
   /* 平均间隔 */
   const avg = avgIntervalDays();
-  $('statAvg').textContent = avg == null ? '—' : avg.toFixed(1) + '<small> 天</small>';
+  $('statAvg').innerHTML = avg == null ? '—' : avg.toFixed(1) + '<small> 天</small>';
   $('statAvgSub').textContent = state.relapses.length ? `共 ${state.relapses.length} 次破戒` : '暂无破戒';
 
+  renderPornStat();
   renderWeekChart(now);
   renderMonthChart(now);
   renderTriggerChart();
   renderHourChart();
+}
+
+/* 色情内容触发占比 */
+function renderPornStat() {
+  const el = $('pornStat');
+  if (!el) return;
+  const rated = state.relapses.filter(r => typeof r.porn === 'boolean');
+  if (!rated.length) {
+    el.innerHTML = '<div class="chart-empty">还没有带详情的记录——下次打卡时选一下“有没有看色情”，这里就能看出模式</div>';
+    return;
+  }
+  const pornCnt = rated.filter(r => r.porn === true).length;
+  const pct = Math.round((pornCnt / rated.length) * 100);
+  const hint = pct >= 60 ? '色情线索是你的主要触发源——把“不主动接触”放在第一位，比硬扛冲动更有效。'
+    : pct <= 30 ? '多数破戒不靠色情触发，更像是生理周期或情绪波动带来的——留意疲惫与压力时刻。'
+    : '两类触发各占一半：既要注意内容线索，也要留意情绪与疲惫。';
+  el.innerHTML = `
+    <div class="porn-bar"><div class="porn-bar-fill" style="width:${pct}%"></div></div>
+    <div class="porn-stat-text">共 ${rated.length} 次有记录，其中 <b>${pornCnt}</b> 次看了色情内容（<b>${pct}%</b>）</div>
+    <div class="porn-hint">${hint}</div>`;
 }
 
 function renderDiff(elId, cur, prev) {
@@ -415,7 +443,7 @@ function renderHistory() {
   list.innerHTML = sorted.map(r => `
     <div class="history-item">
       <div class="hi-main">
-        <div class="hi-time">⏱ ${fmtDateTime(r.time)}${diaryDays.has(localDayKey(r.time)) ? ' <span class="hi-diary-mark" title="这天写了心情日记">📝</span>' : ''}</div>
+        <div class="hi-time">⏱ ${fmtDateTime(r.time)}${diaryDays.has(localDayKey(r.time)) ? ' <span class="hi-diary-mark" title="这天写了心情日记">📝</span>' : ''}${r.porn === true ? ' <span class="hi-porn-mark" title="这次看了色情内容">🎬 看了色情</span>' : r.porn === false ? ' <span class="hi-noporn-mark" title="这次没看色情，纯生理冲动">📵 无内容触发</span>' : ''}</div>
         ${(r.triggers || []).length ? `<div class="hi-triggers">${r.triggers.map(t => `<span class="chip">${esc(t)}</span>`).join('')}</div>` : ''}
         ${r.severity ? `<div class="hi-sev">${'★'.repeat(r.severity)}${'☆'.repeat(5 - r.severity)}</div>` : ''}
         ${r.note ? `<div class="hi-note">${esc(r.note)}</div>` : ''}
@@ -524,11 +552,84 @@ async function followUrge() {
   }
 }
 
+/* ---------------- 底线规则 ---------------- */
+
+let editingRuleId = null;
+
+function renderRules() {
+  const wrap = $('ruleList');
+  if (!wrap) return;
+  const rules = state.goal.rules || [];
+  if (!rules.length) {
+    wrap.innerHTML = '<div class="diary-empty">还没有规则。写一条给自己的底线，冲动时先读它。</div>';
+    return;
+  }
+  wrap.innerHTML = rules.map((r, i) => `
+    <div class="rule-item" data-rule-edit="${r.id}">
+      <span class="rule-num">${i + 1}</span>
+      <span class="rule-text">${esc(r.text)}</span>
+      <span class="hi-actions"><button class="chip-btn" data-rule-edit="${r.id}">编辑</button></span>
+    </div>`).join('');
+}
+
+function openRuleModal(rule) {
+  editingRuleId = rule ? rule.id : null;
+  $('ruleText').value = rule ? rule.text : '';
+  $('btnRuleDelete').style.display = rule ? 'inline-block' : 'none';
+  $('ruleModal').classList.remove('hidden');
+  setTimeout(() => $('ruleText').focus(), 50);
+}
+
+function closeRuleModal() {
+  $('ruleModal').classList.add('hidden');
+}
+
+function saveRule() {
+  const text = $('ruleText').value.trim();
+  if (!text) { toast('规则不能为空'); return; }
+  if (!Array.isArray(state.goal.rules)) state.goal.rules = [];
+  if (editingRuleId) {
+    const r = state.goal.rules.find(x => x.id === editingRuleId);
+    if (r) r.text = text;
+  } else {
+    state.goal.rules.push({
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+      text
+    });
+  }
+  state.goal.updatedAt = Date.now(); /* 触发云同步的 goal 合并 */
+  save();
+  markDirty();
+  closeRuleModal();
+  renderRules();
+  toast('规则已保存');
+}
+
+function deleteRule() {
+  if (!editingRuleId) return;
+  if (!confirm('删除这条规则？')) return;
+  state.goal.rules = (state.goal.rules || []).filter(x => x.id !== editingRuleId);
+  state.goal.updatedAt = Date.now();
+  save();
+  markDirty();
+  closeRuleModal();
+  renderRules();
+  toast('已删除');
+}
+
 /* ---------------- 破戒记录弹窗 ---------------- */
 
 let selectedTriggers = [];
 let severity = 3;
+let pornFlag = null; /* null=未填, false=没看色情, true=看了色情 */
 let editingRelapseId = null; /* 非空 = 编辑模式，记录正在修改的 id */
+
+function renderPornChips() {
+  document.querySelectorAll('#pornChips .chip-opt').forEach(b => {
+    const v = b.dataset.porn === 'yes';
+    b.classList.toggle('sel', pornFlag === v);
+  });
+}
 
 function openRelapseModal(rec) {
   editingRelapseId = rec ? rec.id : null;
@@ -537,6 +638,7 @@ function openRelapseModal(rec) {
     /* 编辑模式：预填该记录 */
     selectedTriggers = [...(rec.triggers || [])];
     severity = rec.severity || 3;
+    pornFlag = typeof rec.porn === 'boolean' ? rec.porn : null;
     $('relapseTime').value = toLocalInput(new Date(rec.time));
     $('relapseNote').value = rec.note || '';
     $('modalTitle').textContent = '修改破戒记录';
@@ -545,6 +647,7 @@ function openRelapseModal(rec) {
     /* 新建模式 */
     selectedTriggers = [];
     severity = 3;
+    pornFlag = null;
     $('relapseTime').value = toLocalInput(new Date());
     $('relapseNote').value = '';
     $('modalTitle').textContent = '记录一次破戒';
@@ -554,6 +657,7 @@ function openRelapseModal(rec) {
   renderTriggerChips();
   renderSelectedTriggers();
   renderStars();
+  renderPornChips();
   $('relapseModal').classList.remove('hidden');
 }
 
@@ -1351,6 +1455,7 @@ function reRenderAll() {
   renderDiaries();
   renderPlans();
   renderAchievements();
+  renderRules();
   renderSettings();
 }
 
@@ -1392,6 +1497,28 @@ function bindEvents() {
   });
   $('btnUrgeFollow').addEventListener('click', followUrge);
   $('urgeFollowInput').addEventListener('keydown', e => { if (e.key === 'Enter') followUrge(); });
+
+  /* 底线规则 */
+  $('btnNewRule').addEventListener('click', () => openRuleModal(null));
+  $('ruleList').addEventListener('click', e => {
+    const btn = e.target.closest('[data-rule-edit]');
+    if (!btn) return;
+    const rule = (state.goal.rules || []).find(r => r.id === btn.dataset.ruleEdit);
+    if (rule) openRuleModal(rule);
+  });
+  $('btnRuleClose').addEventListener('click', closeRuleModal);
+  $('ruleModal').addEventListener('click', e => { if (e.target === $('ruleModal')) closeRuleModal(); });
+  $('btnRuleSave').addEventListener('click', saveRule);
+  $('btnRuleDelete').addEventListener('click', deleteRule);
+
+  /* 破戒时是否看色情 */
+  $('pornChips').addEventListener('click', e => {
+    const chip = e.target.closest('[data-porn]');
+    if (!chip) return;
+    const v = chip.dataset.porn === 'yes';
+    pornFlag = pornFlag === v ? null : v; /* 再点一次取消选择 */
+    renderPornChips();
+  });
   $('btnCancelRelapse').addEventListener('click', closeRelapseModal);
   $('relapseModal').addEventListener('click', e => { if (e.target === $('relapseModal')) closeRelapseModal(); });
 
@@ -1466,6 +1593,7 @@ function bindEvents() {
       time: new Date(timeVal).toISOString(),
       triggers: [...selectedTriggers],
       severity,
+      porn: pornFlag, /* true=看了色情, false=没看, null=未填 */
       note: $('relapseNote').value.trim(),
       updatedAt: Date.now()
     };
@@ -1533,7 +1661,7 @@ function bindEvents() {
     /* 导出时额外生成一个按时间排序的统一时间线，一目了然 */
     const HELP_STATE_NAMES = { active_urge: '冲动正浓', warning: '心神不宁', post_relapse: '刚破戒', stable: '平静' };
     const timeline = [
-      ...state.relapses.map(r => ({ type: '破戒', time: r.time, triggers: r.triggers, severity: r.severity, note: r.note })),
+      ...state.relapses.map(r => ({ type: '破戒', time: r.time, triggers: r.triggers, severity: r.severity, porn: r.porn === true ? '看了色情内容' : r.porn === false ? '未看色情（纯生理冲动）' : '未填', note: r.note })),
       ...state.diaries.map(d => ({ type: '日记', time: d.time, mood: d.mood, content: d.content })),
       ...state.helps.map(h => ({ type: 'AI干预', time: h.time, state: HELP_STATE_NAMES[h.state] || h.state, message: h.message, reply: h.reply }))
     ].sort((a, b) => new Date(a.time) - new Date(b.time));

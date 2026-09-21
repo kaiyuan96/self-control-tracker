@@ -301,10 +301,24 @@ async function helpForAccount(env, code, state, message, history) {
   for (const r of all) for (const t of (r.triggers || [])) tf[t] = (tf[t] || 0) + 1;
   const topTf = Object.entries(tf).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([t]) => t).join('、') || '暂无记录';
 
-  /* 最近 3 次破戒完整明细（北京时间，含诱因+备注） */
+  /* 最近 3 次破戒完整明细（北京时间，含诱因+备注+是否看色情） */
   const recentRelapses = sorted.slice(-3).reverse().map(r =>
-    `${toBJStr(r.time)} 严重度${r.severity || '?'} 诱因[${(r.triggers || []).join(',') || '未填'}]${r.note ? ' 备注「' + r.note + '」' : ''}`
+    `${toBJStr(r.time)} 严重度${r.severity || '?'} 诱因[${(r.triggers || []).join(',') || '未填'}]` +
+    `${r.porn === true ? ' 看了色情内容' : r.porn === false ? ' 未看色情(纯生理冲动)' : ''}` +
+    `${r.note ? ' 备注「' + r.note + '」' : ''}`
   ).join('\n') || '（还没有破戒记录）';
+
+  /* 色情触发占比 */
+  const rated = all.filter(r => typeof r.porn === 'boolean');
+  const pornCnt = rated.filter(r => r.porn === true).length;
+  const pornLine = rated.length >= 3
+    ? `有记录的 ${rated.length} 次破戒中，${pornCnt} 次伴随色情内容（${Math.round((pornCnt / rated.length) * 100)}%）。`
+    : '';
+
+  /* 用户给自己定的底线规则 */
+  const userRules = Array.isArray(goal.rules) && goal.rules.length
+    ? goal.rules.map(r => '· ' + r.text).join('\n')
+    : '';
 
   /* 最近 3 篇日记（情绪 + 内容） */
   const recentDiaries = [...diaries].sort((a, b) => (a.time || '') < (b.time || '') ? 1 : -1).slice(0, 3).map(d =>
@@ -328,9 +342,11 @@ async function helpForAccount(env, code, state, message, history) {
     '== 用户的历史数据（用于个性化共情，务必引用） ==',
     `目标「${goal.name || '自律'}」；当前已连续坚持 ${cur} 天，历史最长 ${Math.floor(best / 86400000)} 天。`,
     `近期高频诱因：${topTf}。`,
+    pornLine,
     `最近破戒记录（北京时间）：\n${recentRelapses}`,
     `最近的日记心情：\n${recentDiaries}`,
     `已有预案：${planBrief}。`,
+    userRules ? `\n== 用户给自己定的底线规则（干预时要主动引用，帮 ta 想起来） ==\n${userRules}` : '',
     '',
     `当前状态：${URGE_STATES[state] || URGE_STATES.active_urge}`,
     `用户此刻说的话：${message ? '「' + message + '」' : '（ta 没说话，请根据最近日记的情绪和最近破戒的时段推断 ta 此刻的可能状态）'}`,
@@ -345,6 +361,8 @@ async function helpForAccount(env, code, state, message, history) {
     '- 平静：简短肯定，问一个有用的问题。',
     '- 刚破戒：明确告诉 ta"这是一次数据点，不是判决"（结合历史最长连续，如"你曾连续 21 天，那不是运气"）；再给一句贴合情绪的历史人物语录；最后问"这件事发生在几点？告诉我，我在那个时段前提醒你。"',
     '第三步【邀请继续】：这是对话的一部分。可以自然地接上一句邀请（如"做完感觉怎么样？"或"如果冲动还在，就告诉我"），但不要问那种必须等回复才成立的话。',
+    userRules ? '特别注意：如果用户有自己的底线规则（见上文），请在共情或行动里自然地引用一条（例如"记得你自己定的：想自慰时先等十五分钟再决定——现在就开始这十五分钟"），帮 ta 想起自己许下的承诺。不要生硬复述全部规则。' : '',
+    pornLine ? '注意：如果数据显示色情内容是 ta 的主要触发源，可以在共情时点出这个模式（"你的记录显示多半是看了内容之后发生的"），但不要说教。' : '',
     '',
     '整体要求：直接输出内容，不要解释你在做什么、不要加引号标题；总长不超过 220 字；语气像懂 ta 的朋友，温暖但不煽情。'
   ].filter(Boolean).join('\n');

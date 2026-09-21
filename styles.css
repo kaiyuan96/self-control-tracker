@@ -657,6 +657,72 @@ body::before {
 .diary-relapse-row { font-size: 12px; color: var(--text-2); line-height: 1.7; word-break: break-word; }
 .diary-relapse-row i { color: var(--text-3); font-style: normal; }
 .hi-diary-mark { font-size: 11px; }
+.hi-porn-mark {
+  font-size: 11px;
+  color: #fda4af;
+  background: var(--red-soft);
+  border: 1px solid rgba(251, 113, 133, 0.28);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.hi-noporn-mark {
+  font-size: 11px;
+  color: var(--text-3);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+/* 底线规则 */
+.rule-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: var(--glass-2);
+  border: 1px solid var(--glass-border);
+  border-left: 3px solid var(--gold);
+  border-radius: 12px;
+  padding: 11px 13px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: border-color 0.18s, background 0.18s;
+}
+.rule-item:hover { background: rgba(255, 255, 255, 0.06); border-color: var(--glass-border-bright); }
+.rule-num {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--gold-soft);
+  color: var(--gold);
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+}
+.rule-text { flex: 1; font-size: 13px; color: var(--text); line-height: 1.7; }
+
+/* 色情触发占比 */
+.porn-bar {
+  height: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 999px;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+.porn-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #fb7185, #be123c);
+  box-shadow: 0 0 12px rgba(251, 113, 133, 0.4);
+  transition: width 0.6s cubic-bezier(0.22, 0.68, 0.35, 1);
+}
+.porn-stat-text { font-size: 13px; color: var(--text-2); }
+.porn-stat-text b { color: var(--red); font-size: 15px; }
+.porn-hint { font-size: 12px; color: var(--text-3); margin-top: 8px; line-height: 1.7; }
 .timeline-stats {
   font-size: 12px;
   color: var(--text-2);
