@@ -91,16 +91,43 @@ function buildHistorySummary(allRecords) {
   for (const r of sorted) { const t = new Date(r.time).getTime(); if (t - prev > best) best = t - prev; prev = t; }
   if (Date.now() - prev > best) best = Date.now() - prev;
 
+  /* 色情触发占比（全历史） */
+  const rated = sorted.filter(r => typeof r.porn === 'boolean');
+  const pornCnt = rated.filter(r => r.porn === true).length;
+  const pornLine = rated.length
+    ? `色情内容触发：有记录的 ${rated.length} 次中 ${pornCnt} 次伴随色情内容（占 ${Math.round((pornCnt / rated.length) * 100)}%），其余为纯生理冲动。`
+    : '';
+
   return [
     `总破戒 ${sorted.length} 次，首次记录于 ${f(sorted[0].time)}。`,
     `近 8 周趋势（从旧到新）：[${trend.join(', ')}]。`,
     `诱因累计排名：${topTf}。`,
     `时段分布：${Object.entries(segs).map(([k, v]) => `${k}${v}次`).join('、')}。`,
+    pornLine,
     `最长连续坚持约 ${(best / 86400000).toFixed(1)} 天，当前距上次破戒 ${((Date.now() - prev) / 86400000).toFixed(1)} 天。`
-  ].join('\n');
+  ].filter(Boolean).join('\n');
 }
 
 function buildPrompt(goal, weekRecords, range, allRecords, weekDiaries, userPlans) {
+  /* 预先统计上周时段分布，避免 AI 自己数错 */
+  const segCount = { '凌晨(0-6点)': 0, '上午(6-12点)': 0, '下午(12-18点)': 0, '晚上(18-24点)': 0 };
+  let weekPornYes = 0, weekPornNo = 0;
+  for (const r of weekRecords) {
+    const h = parseInt(String(r.time).slice(11, 13), 10);
+    if (h < 6) segCount['凌晨(0-6点)']++;
+    else if (h < 12) segCount['上午(6-12点)']++;
+    else if (h < 18) segCount['下午(12-18点)']++;
+    else segCount['晚上(18-24点)']++;
+    if (r.porn === '看了色情内容') weekPornYes++;
+    else if (r.porn === '没看色情(纯生理冲动)') weekPornNo++;
+  }
+  const segLine = weekRecords.length
+    ? `上周时段分布（已统计好，直接采用，不要再自己数）：${Object.entries(segCount).map(([k, v]) => `${k} ${v}次`).join('、')}。`
+    : '';
+  const weekPornLine = (weekPornYes + weekPornNo)
+    ? `上周色情情况（已统计好）：${weekPornYes} 次看了色情内容、${weekPornNo} 次没看。`
+    : '';
+
   const lines = [
     '你是一位温暖、专业的自律习惯教练。用户在使用一款「自律打卡」应用（帮助戒除不良习惯、坚持自律生活）。',
     '',
@@ -110,7 +137,9 @@ function buildPrompt(goal, weekRecords, range, allRecords, weekDiaries, userPlan
     '',
     `== 第二部分：上一周（${range.weekLabel}）的破戒记录逐条明细 ==`,
     JSON.stringify(weekRecords),
-    '字段说明：time=发生时间（北京时间 YYYY-MM-DD HH:mm），triggers=诱因标签数组，severity=严重程度1-5，note=用户当时写下的备注原文。',
+    '字段说明：time=发生时间（北京时间 YYYY-MM-DD HH:mm），triggers=诱因标签数组，severity=严重程度1-5，porn=这次破戒前是否看了色情内容（"看了色情内容"/"没看色情(纯生理冲动)"/"未填"），note=用户当时写下的备注原文。',
+    segLine,
+    weekPornLine,
     '',
     '== 第三部分：上一周的日记原文 ==',
     weekDiaries.length ? JSON.stringify(weekDiaries) : '（上周未写日记）',
@@ -122,7 +151,7 @@ function buildPrompt(goal, weekRecords, range, allRecords, weekDiaries, userPlan
     '',
     '请结合长期摘要、本周明细、日记原文与预案使用情况，输出一份中文周报，严格使用以下结构：',
     '【本周概览】2-3 句话总结次数与趋势',
-    '【模式洞察】时段规律、诱因关联；请把日记里的情绪线索与破戒记录相互印证——注意对比每篇日记的记录时间与破戒发生时间的先后顺序：日记先于破戒出现说明该情绪可能是前兆信号，破戒之后才写的日记则更多是事后感受与反思；如备注或日记里有情绪描述，请具体回应它',
+    '【模式洞察】时段规律、诱因关联；请把日记里的情绪线索与破戒记录相互印证——注意对比每篇日记的记录时间与破戒发生时间的先后顺序：日记先于破戒出现说明该情绪可能是前兆信号，破戒之后才写的日记则更多是事后感受与反思；如备注或日记里有情绪描述，请具体回应它。另外请分析 porn 字段（是否看色情内容）：如果多数破戒伴随色情内容，说明"接触内容"才是真正的起点，建议应聚焦在阻断内容获取（拔掉线索、限制入口）而不是硬扛冲动；如果多数是纯生理冲动，则说明重点在情绪与疲惫管理。**特别注意对比本周与全历史摘要中的色情占比**：若两者差异明显（例如历史多数伴随色情、但本周一次都没看），一定要指出这个变化并说明它的意义（是进步、是模式切换、还是本周样本太少）。',
     '【长期观察】结合全历史数据指出进步、恶化或反复的轨迹（如无可略写）',
     '【下周建议】3 条具体可执行的小行动，每条一行，以 · 开头；若用户已有预案，请结合 missed/used 数据评估哪张需要修改；若没有预案，第 1 条建议改为引导建立第一张兜底预案（离开现场+等待10分钟）',
     '',
@@ -167,12 +196,14 @@ async function generateReportForAccount(env, code) {
   try { allDiaries = JSON.parse(row.diaries || '[]'); } catch (e) {}
 
   const range = lastWeekRange();
+  /* 是否看色情 → 可读标签（AI 按字面理解，用中文比布尔值更准） */
+  const pornLabel = v => v === true ? '看了色情内容' : v === false ? '没看色情(纯生理冲动)' : '未填';
   /* 先按原始 ISO 过滤上周，再把时间转成北京时间字符串给 AI */
   const weekRaw = all.filter(r => { const t = new Date(r.time).getTime(); return t >= range.start && t < range.end; });
   const weekRecords = weekRaw
-    .map(r => ({ time: toBJStr(r.time), triggers: r.triggers || [], severity: r.severity || 0, note: (r.note || '').slice(0, 300) }))
+    .map(r => ({ time: toBJStr(r.time), triggers: r.triggers || [], severity: r.severity || 0, porn: pornLabel(r.porn), note: (r.note || '').slice(0, 300) }))
     .sort((a, b) => a.time < b.time ? -1 : 1);
-  const mapped = all.map(r => ({ time: r.time, triggers: r.triggers || [], severity: r.severity || 0, note: r.note || '' }));
+  const mapped = all.map(r => ({ time: r.time, triggers: r.triggers || [], severity: r.severity || 0, porn: pornLabel(r.porn), note: r.note || '' }));
 
   const weekDiaries = allDiaries
     .map(d => {
@@ -239,10 +270,15 @@ async function suggestPlansForAccount(env, code) {
   const topSegs = Object.entries(segs).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}${v}次`);
   const existingPlans = plans.map(p => ({ if: p.ifText, then: p.thenText }));
 
+  /* 色情触发占比：决定预案是否该针对"接触内容"这一步 */
+  const ratedP = all.filter(r => typeof r.porn === 'boolean');
+  const pornPct = ratedP.length >= 3 ? Math.round((ratedP.filter(r => r.porn === true).length / ratedP.length) * 100) : null;
+
   const prompt = [
     '你是一位自律习惯教练。用户在用一款「自律打卡」应用，需要建立"如果-那么"执行意图预案卡来应对冲动。',
     goal.name ? `目标：${goal.name}。` : '',
     `历史高频诱因：${topTf.length ? topTf.join('、') : '暂无记录'}；高危时段：${topSegs.length ? topSegs.join('、') : '暂无记录'}。`,
+    pornPct != null ? `重要：${ratedP.length} 次破戒中有 ${pornPct}% 伴随色情内容——如果占比过半，请至少给出一条针对"刚接触/即将打开色情内容"这一起点的预案（例如：手指伸向搜索框时立刻锁屏并把手机放到另一个房间）。` : '',
     existingPlans.length ? `已有预案：${JSON.stringify(existingPlans)}（新建议须与它们不同）。` : '尚无预案。',
     '',
     '请生成 3 条预案候选，严格输出 JSON 数组（不要任何其他文字、不要 markdown 代码块标记）：',

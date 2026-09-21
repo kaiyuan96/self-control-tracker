@@ -1391,9 +1391,15 @@ function buildReportBody(lastMon) {
   for (const r of cur) segs[SEG_NAMES[Math.floor(new Date(r.time).getHours() / 6)]] = (segs[SEG_NAMES[Math.floor(new Date(r.time).getHours() / 6)]] || 0) + 1;
   const topSeg = Object.entries(segs).sort((a, b) => b[1] - a[1])[0];
 
+  /* 色情触发占比（上周） */
+  const ratedWeek = cur.filter(r => typeof r.porn === 'boolean');
+  const pornWeek = ratedWeek.filter(r => r.porn === true).length;
+  const pornPct = ratedWeek.length ? Math.round((pornWeek / ratedWeek.length) * 100) : null;
+
   /* 建议 */
   let tip;
   if (cur.length === 0) tip = '上周零破戒，把这套节奏保持下去——记录让你更清醒。';
+  else if (pornPct != null && pornPct >= 60) tip = `上周 ${pornWeek}/${ratedWeek.length} 次破戒前都看了色情内容——真正的起点是"打开内容"那一步。下周把防线前移：提前锁掉入口，比冲动来了再硬扛有效得多。`;
   else if (topSeg && topSeg[1] >= Math.ceil(cur.length / 2)) tip = `你的破戒集中在【${topSeg[0]}】时段，下周这个时段提前安排别的事，避开触发场景。`;
   else if (topTriggers.length) tip = `高频诱因是「${topTriggers[0][0]}」，下次它冒头时先离开现场 10 分钟。`;
   else tip = '破戒不是失败，记录并复盘，趋势会越来越好。';
@@ -1410,6 +1416,7 @@ function buildReportBody(lastMon) {
       </div>
     </div>
     ${cur.length ? `<div class="report-sec"><b>诱因：</b>${topTriggers.length ? topTriggers.map(([t, c]) => `<span class="chip">${esc(t)} ×${c}</span>`).join(' ') : '<span class="report-dim">未填写</span>'}</div>` : ''}
+    ${ratedWeek.length ? `<div class="report-sec"><b>色情内容触发：</b>${pornWeek}/${ratedWeek.length} 次（${pornPct}%）</div>` : ''}
     <div class="report-tip">${esc(tip)}</div>`;
 }
 
