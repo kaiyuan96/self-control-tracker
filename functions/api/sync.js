@@ -60,11 +60,13 @@ function ensureSchema(env) {
       .prepare(
         'CREATE TABLE IF NOT EXISTS accounts (' +
         'code TEXT PRIMARY KEY, goal TEXT, relapses TEXT, deleted TEXT, updated_at INTEGER, ' +
-        'ai_report TEXT, ai_report_week TEXT, diaries TEXT, plans TEXT, helps TEXT)'
+        'ai_report TEXT, ai_report_week TEXT, diaries TEXT, plans TEXT, helps TEXT, ai_report_history TEXT)'
       )
       .run()
       .then(() => env.abstinence_db.prepare('ALTER TABLE accounts ADD COLUMN helps TEXT').run())
       .catch(() => {}) /* helps 列已存在时忽略 */
+      .then(() => env.abstinence_db.prepare('ALTER TABLE accounts ADD COLUMN ai_report_history TEXT').run())
+      .catch(() => {}) /* ai_report_history 列已存在时忽略 */
       .then(() => true);
   }
   return schemaReady;
@@ -79,7 +81,7 @@ async function handleSync(request, env) {
       const code = (url.searchParams.get('code') || '').trim().toUpperCase();
       if (!code) return json({ ok: false, error: '缺少访问码' }, 400);
       const row = await env.abstinence_db
-        .prepare('SELECT goal, relapses, deleted, ai_report, ai_report_week, diaries, plans, helps FROM accounts WHERE code = ?')
+        .prepare('SELECT goal, relapses, deleted, ai_report, ai_report_week, ai_report_history, diaries, plans, helps FROM accounts WHERE code = ?')
         .bind(code).first();
       if (!row) return json({ ok: false, error: '访问码不存在' }, 404);
       const relapses = JSON.parse(row.relapses || '[]');
@@ -90,6 +92,8 @@ async function handleSync(request, env) {
       try { plans = applyDeleted(JSON.parse(row.plans || '[]'), deleted); } catch (e) {}
       let helps = [];
       try { helps = applyDeleted(JSON.parse(row.helps || '[]'), deleted); } catch (e) {}
+      let aiReportHistory = [];
+      try { aiReportHistory = JSON.parse(row.ai_report_history || '[]'); } catch (e) {}
       return json({
         ok: true,
         goal: JSON.parse(row.goal),
@@ -98,6 +102,7 @@ async function handleSync(request, env) {
         diaries,
         plans,
         helps,
+        aiReportHistory,
         aiReport: row.ai_report ? { content: row.ai_report, week: row.ai_report_week || '' } : null,
         serverTime: Date.now()
       });
@@ -158,10 +163,13 @@ async function handleSync(request, env) {
         .bind(code, JSON.stringify(mergedGoal), JSON.stringify(mergedRelapses), JSON.stringify(mergedDeleted), now, JSON.stringify(mergedDiaries), JSON.stringify(mergedPlans), JSON.stringify(mergedHelps))
         .run();
 
-      /* 回传最新 AI 报告（如有），客户端同步时一并拿到 */
+      /* 回传最新 AI 报告与历史会话（如有），客户端同步时一并拿到 */
       const after = await env.abstinence_db
-        .prepare('SELECT ai_report, ai_report_week FROM accounts WHERE code = ?')
+        .prepare('SELECT ai_report, ai_report_week, ai_report_history FROM accounts WHERE code = ?')
         .bind(code).first();
+
+      let aiReportHistory = [];
+      try { aiReportHistory = JSON.parse((after && after.ai_report_history) || '[]'); } catch (e) {}
 
       return json({
         ok: true,
@@ -171,6 +179,7 @@ async function handleSync(request, env) {
         diaries: mergedDiaries,
         plans: mergedPlans,
         helps: mergedHelps,
+        aiReportHistory,
         aiReport: after && after.ai_report ? { content: after.ai_report, week: after.ai_report_week || '' } : null,
         serverTime: now
       });

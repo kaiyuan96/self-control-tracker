@@ -89,7 +89,10 @@
         <div class="tip card ai-card" id="aiCard" style="display:none">
           <div class="tip-title"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>AI 分析师 <span class="ai-meta" id="aiMeta"></span></div>
           <div class="ai-body" id="aiBody"></div>
-          <button class="chip-btn" id="btnRegenAI" style="margin-top:10px">🔄 让 AI 重新分析</button>
+          <div class="plan-actions" style="margin-top:10px">
+            <button class="chip-btn" id="btnRegenAI">🔄 让 AI 重新分析</button>
+            <button class="chip-btn" id="btnReportHistory">📚 历史会话</button>
+          </div>
         </div>
       </section>
 
@@ -229,6 +232,16 @@
       </section>
 
     </main>
+  </div>
+
+  <!-- ======== 历史周报（连续会话）弹窗 ======== -->
+  <div class="modal-mask hidden" id="historyModal">
+    <div class="modal">
+      <button class="modal-close" id="btnHistoryClose" aria-label="关闭">✕</button>
+      <div class="modal-title">📚 AI 历史会话</div>
+      <div class="modal-sub">AI 记得这些内容——每周分析都会接续上文，像一场持续的对话。</div>
+      <div id="historyList"></div>
+    </div>
   </div>
 
   <!-- ======== 底线规则弹窗 ======== -->

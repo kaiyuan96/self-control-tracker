@@ -28,6 +28,7 @@ function defaultState() {
     relapses: [],
     deleted: {},                       /* 已删除记录 id -> 删除时间戳（用于云同步） */
     helps: [],                         /* AI 干预记录 [{id,time,state,message,reply,updatedAt}] */
+    aiReportHistory: [],               /* 历史周报 [{week,content,generatedAt}]，AI 连续会话 */
     cloud: { code: '', connected: false, lastSyncAt: null }
   };
 }
@@ -77,6 +78,7 @@ function normalizeState() {
   state.diaries = state.diaries.map(normalizeDiary);
   if (!Array.isArray(state.plans)) state.plans = []; /* 预案卡 [{id,ifText,thenText,source,createdAt,updatedAt,used,missed}] */
   if (!Array.isArray(state.helps)) state.helps = []; /* AI 干预记录 [{id,time,state,message,reply,updatedAt}] */
+  if (!Array.isArray(state.aiReportHistory)) state.aiReportHistory = []; /* 历史周报（连续会话） */
   if (!Array.isArray(state.goal.rules)) state.goal.rules = DEFAULT_RULES.map(r => ({ ...r })); /* 底线规则 */
 }
 
@@ -247,8 +249,27 @@ function renderAI() {
   const r = state.aiReport;
   if (!r || !r.content) { card.style.display = 'none'; return; }
   card.style.display = 'block';
-  $('aiMeta').textContent = r.week ? `· ${r.week}` : '';
+  const hist = state.aiReportHistory || [];
+  $('aiMeta').textContent = (r.week ? `· ${r.week}` : '') + (hist.length > 1 ? ` · 第 ${hist.length} 期会话` : '');
   $('aiBody').textContent = r.content;
+  const histBtn = $('btnReportHistory');
+  if (histBtn) histBtn.style.display = hist.length ? 'inline-block' : 'none';
+}
+
+/* 历史会话（AI 连续周报） */
+function openReportHistory() {
+  const list = $('historyList');
+  const hist = [...(state.aiReportHistory || [])].sort((a, b) => (a.week || '') < (b.week || '') ? 1 : -1);
+  if (!hist.length) {
+    list.innerHTML = '<div class="diary-empty">还没有历史会话，AI 每次分析后都会存进这里。</div>';
+  } else {
+    list.innerHTML = hist.map((h, i) => `
+      <div class="history-report">
+        <div class="history-report-head">${i === 0 ? '🆕 最新 · ' : ''}${esc(h.week)}</div>
+        <div class="history-report-body">${esc(h.content).replace(/\n/g, '<br>')}</div>
+      </div>`).join('');
+  }
+  $('historyModal').classList.remove('hidden');
 }
 
 async function regenerateAI() {
@@ -265,9 +286,13 @@ async function regenerateAI() {
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || '生成失败');
     state.aiReport = { content: data.report.content, week: data.report.week };
+    /* 本地也追加进会话历史（与服务端保持一致） */
+    const hist = (state.aiReportHistory || []).filter(h => h.week !== data.report.week);
+    hist.push({ week: data.report.week, content: data.report.content, generatedAt: Date.now() });
+    state.aiReportHistory = hist.slice(-12);
     save();
     renderAI();
-    toast('AI 分析已更新 ✨');
+    toast('AI 分析已更新 ✨' + (state.aiReportHistory.length > 1 ? '（已接续之前 ' + (state.aiReportHistory.length - 1) + ' 期会话）' : ''));
   } catch (e) {
     toast('生成失败：' + e.message);
   } finally {
@@ -777,6 +802,7 @@ async function syncNow(quiet = false) {
     if (pull && pull.ok) {
       mergeWithCloud(pull);
       if (pull.aiReport !== undefined) state.aiReport = pull.aiReport;
+      if (Array.isArray(pull.aiReportHistory)) state.aiReportHistory = pull.aiReportHistory;
       if (Array.isArray(pull.diaries)) mergeDiariesFromCloud(pull.diaries);
       if (Array.isArray(pull.plans)) mergePlansFromCloud(pull.plans);
       if (Array.isArray(pull.helps)) mergeHelpsFromCloud(pull.helps);
@@ -793,6 +819,7 @@ async function syncNow(quiet = false) {
     if (data.aiReport !== undefined) {
       state.aiReport = data.aiReport; /* {content, week} 或 null */
     }
+    if (Array.isArray(data.aiReportHistory)) state.aiReportHistory = data.aiReportHistory;
     if (Array.isArray(data.diaries)) mergeDiariesFromCloud(data.diaries);
     if (Array.isArray(data.plans)) mergePlansFromCloud(data.plans);
     if (Array.isArray(data.helps)) mergeHelpsFromCloud(data.helps);
@@ -1745,6 +1772,9 @@ function bindEvents() {
 
   /* AI 分析 */
   $('btnRegenAI').addEventListener('click', regenerateAI);
+  $('btnReportHistory').addEventListener('click', openReportHistory);
+  $('btnHistoryClose').addEventListener('click', () => $('historyModal').classList.add('hidden'));
+  $('historyModal').addEventListener('click', e => { if (e.target === $('historyModal')) $('historyModal').classList.add('hidden'); });
 
   /* 心情日记 */
   $('btnNewDiary').addEventListener('click', () => openDiaryModal());

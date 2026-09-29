@@ -27,10 +27,12 @@ function ensureSchema(env) {
       .prepare(
         'CREATE TABLE IF NOT EXISTS accounts (' +
         'code TEXT PRIMARY KEY, goal TEXT, relapses TEXT, deleted TEXT, updated_at INTEGER, ' +
-        'ai_report TEXT, ai_report_week TEXT, diaries TEXT, plans TEXT, helps TEXT)'
+        'ai_report TEXT, ai_report_week TEXT, diaries TEXT, plans TEXT, helps TEXT, ai_report_history TEXT)'
       )
       .run()
       .then(() => env.abstinence_db.prepare('ALTER TABLE accounts ADD COLUMN helps TEXT').run())
+      .catch(() => {})
+      .then(() => env.abstinence_db.prepare('ALTER TABLE accounts ADD COLUMN ai_report_history TEXT').run())
       .catch(() => {})
       .then(() => true);
   }
@@ -108,7 +110,7 @@ function buildHistorySummary(allRecords) {
   ].filter(Boolean).join('\n');
 }
 
-function buildPrompt(goal, weekRecords, range, allRecords, weekDiaries, userPlans) {
+function buildPrompt(goal, weekRecords, range, allRecords, weekDiaries, userPlans, reportHistory) {
   /* 预先统计上周时段分布，避免 AI 自己数错 */
   const segCount = { '凌晨(0-6点)': 0, '上午(6-12点)': 0, '下午(12-18点)': 0, '晚上(18-24点)': 0 };
   let weekPornYes = 0, weekPornNo = 0;
@@ -144,18 +146,29 @@ function buildPrompt(goal, weekRecords, range, allRecords, weekDiaries, userPlan
     '== 第三部分：上一周的日记原文 ==',
     weekDiaries.length ? JSON.stringify(weekDiaries) : '（上周未写日记）',
     '字段说明：time=记录时间（北京时间 YYYY-MM-DD HH:mm，精确到分），mood=当天心情标记(😊开心 🙂不错 😐一般 😞低落 😫疲惫 😡烦躁)，content=用户亲笔写下的当日心情与经历。',
+    weekDiaries.length ? '分析情绪线索时，请对比日记时间与破戒时间的先后：日记先于破戒出现→该情绪可能是前兆信号；破戒之后才写→多是事后反思。' : '',
     '',
     '== 第四部分：用户的"如果-那么"预案卡及使用情况 ==',
     (userPlans && userPlans.length) ? JSON.stringify(userPlans) : '（用户还没有建立任何预案）',
     '字段说明：if=触发情境，then=预定动作，missed=破戒时没执行该预案的次数，used=执行了但未拦住的次数。',
     '',
-    '请结合长期摘要、本周明细、日记原文与预案使用情况，输出一份中文周报，严格使用以下结构：',
-    '【本周概览】2-3 句话总结次数与趋势',
-    '【模式洞察】时段规律、诱因关联；请把日记里的情绪线索与破戒记录相互印证——注意对比每篇日记的记录时间与破戒发生时间的先后顺序：日记先于破戒出现说明该情绪可能是前兆信号，破戒之后才写的日记则更多是事后感受与反思；如备注或日记里有情绪描述，请具体回应它。另外请分析 porn 字段（是否看色情内容）：如果多数破戒伴随色情内容，说明"接触内容"才是真正的起点，建议应聚焦在阻断内容获取（拔掉线索、限制入口）而不是硬扛冲动；如果多数是纯生理冲动，则说明重点在情绪与疲惫管理。**特别注意对比本周与全历史摘要中的色情占比**：若两者差异明显（例如历史多数伴随色情、但本周一次都没看），一定要指出这个变化并说明它的意义（是进步、是模式切换、还是本周样本太少）。',
-    '【长期观察】结合全历史数据指出进步、恶化或反复的轨迹（如无可略写）',
-    '【下周建议】3 条具体可执行的小行动，每条一行，以 · 开头；若用户已有预案，请结合 missed/used 数据评估哪张需要修改；若没有预案，第 1 条建议改为引导建立第一张兜底预案（离开现场+等待10分钟）',
+    '（分析时可以关注这些角度，但不是必须逐条覆盖：时段与诱因的模式、porn 维度——若多数破戒伴随色情内容则"接触内容"才是起点，建议应聚焦阻断入口而非硬扛冲动；若多数是纯生理冲动则重点在情绪与疲惫管理、也要对比本周与全历史的色情占比差异、日记情绪与破戒的时序关联、以及预案的 missed/used 说明了什么。）',
     '',
-    '要求：语气像理解他的朋友，不说教不评判；总长不超过 450 字；直接输出内容，不要寒暄。'
+    (reportHistory && reportHistory.length
+      ? '== 第五部分：你之前几周写给这位用户的报告（这是同一场连续对话，请接续它） ==\n' +
+        reportHistory.map(h => `【${h.week}】\n${h.content}`).join('\n\n') + '\n' +
+        '请注意：这是你与用户持续进行的对话。这次要自然地接续之前的内容——比如上周你给过什么建议、指出过什么模式，这周数据有没有印证或推翻它；如果建议奏效就明确说出来，如果没奏效就换个思路，不要重复上周已经说过的话。'
+      : ''),
+    '',
+    '== 请写这一周的周报 ==',
+    '你可以自由决定怎么写、用什么结构——不必套用固定模板，可以用分析、可以用聊天口吻、可以只讲你认为最重要的两三件事。但请做到：',
+    '1. 真正基于数据说话：引用具体的次数、时间点、诱因、日记里的原话，不要泛泛而谈。',
+    '2. 有洞察：指出模式、变化与可能的因果，特别是「和之前比变了什么」。',
+    '3. 如果这是连续对话（见第五部分），要接续上文，不要像第一次见面那样重新开始。',
+    '4. 结尾给 2-3 条具体可执行的小行动（每条一行，以 · 开头）。若用户已有预案，结合 missed/used 评估哪张需要修改。',
+    '5. 语气像理解他的朋友：不说教、不评判、不喊口号；也不必刻意煽情。',
+    '',
+    '长度自然即可（大致 300-600 字），直接输出周报内容，不要写"好的，这是您的报告"之类的开场白。'
   ];
   return lines.filter(Boolean).join('\n');
 }
@@ -185,7 +198,7 @@ async function callDeepSeek(env, prompt, maxTokens = 800) {
 async function generateReportForAccount(env, code) {
   await ensureSchema(env);
   const row = await env.abstinence_db
-    .prepare('SELECT goal, relapses, diaries FROM accounts WHERE code = ?')
+    .prepare('SELECT goal, relapses, diaries, plans, ai_report_history FROM accounts WHERE code = ?')
     .bind(code).first();
   if (!row) throw new Error('账号不存在');
 
@@ -194,6 +207,10 @@ async function generateReportForAccount(env, code) {
   const goal = (() => { try { return JSON.parse(row.goal || '{}'); } catch (e) { return {}; } })();
   let allDiaries = [];
   try { allDiaries = JSON.parse(row.diaries || '[]'); } catch (e) {}
+  /* 之前几周的报告（连续会话上下文） */
+  let reportHistory = [];
+  try { reportHistory = JSON.parse(row.ai_report_history || '[]'); } catch (e) {}
+  reportHistory = reportHistory.slice(-4); /* 只带最近 4 期，控制长度 */
 
   const range = lastWeekRange();
   /* 是否看色情 → 可读标签（AI 按字面理解，用中文比布尔值更准） */
@@ -221,14 +238,19 @@ async function generateReportForAccount(env, code) {
   let userPlans = [];
   try { userPlans = JSON.parse(row.plans || '[]'); } catch (e) {}
   const planData = userPlans.map(p => ({ if: p.ifText, then: p.thenText, missed: p.missed || 0, used: p.used || 0 }));
-  const content = await callDeepSeek(env, buildPrompt(goal, weekRecords, range, mapped, weekDiaries, planData));
+  const content = await callDeepSeek(env, buildPrompt(goal, weekRecords, range, mapped, weekDiaries, planData, reportHistory), 1200);
+
+  /* 追加进会话历史（保留最近 12 期），同一周重复生成则覆盖 */
+  const history = reportHistory.filter(h => h.week !== range.weekLabel);
+  history.push({ week: range.weekLabel, content, generatedAt: Date.now() });
+  const trimmed = history.slice(-12);
 
   await env.abstinence_db
-    .prepare('UPDATE accounts SET ai_report = ?, ai_report_week = ? WHERE code = ?')
-    .bind(content, range.weekLabel, code)
+    .prepare('UPDATE accounts SET ai_report = ?, ai_report_week = ?, ai_report_history = ? WHERE code = ?')
+    .bind(content, range.weekLabel, JSON.stringify(trimmed), code)
     .run();
 
-  return { content, week: range.weekLabel, count: weekRecords.length };
+  return { content, week: range.weekLabel, count: weekRecords.length, historyCount: trimmed.length };
 }
 
 async function runWeeklyReports(env) {
