@@ -577,71 +577,6 @@ async function followUrge() {
   }
 }
 
-/* ---------------- 底线规则 ---------------- */
-
-let editingRuleId = null;
-
-function renderRules() {
-  const wrap = $('ruleList');
-  if (!wrap) return;
-  const rules = state.goal.rules || [];
-  if (!rules.length) {
-    wrap.innerHTML = '<div class="diary-empty">还没有规则。写一条给自己的底线，冲动时先读它。</div>';
-    return;
-  }
-  wrap.innerHTML = rules.map((r, i) => `
-    <div class="rule-item" data-rule-edit="${r.id}">
-      <span class="rule-num">${i + 1}</span>
-      <span class="rule-text">${esc(r.text)}</span>
-      <span class="hi-actions"><button class="chip-btn" data-rule-edit="${r.id}">编辑</button></span>
-    </div>`).join('');
-}
-
-function openRuleModal(rule) {
-  editingRuleId = rule ? rule.id : null;
-  $('ruleText').value = rule ? rule.text : '';
-  $('btnRuleDelete').style.display = rule ? 'inline-block' : 'none';
-  $('ruleModal').classList.remove('hidden');
-  setTimeout(() => $('ruleText').focus(), 50);
-}
-
-function closeRuleModal() {
-  $('ruleModal').classList.add('hidden');
-}
-
-function saveRule() {
-  const text = $('ruleText').value.trim();
-  if (!text) { toast('规则不能为空'); return; }
-  if (!Array.isArray(state.goal.rules)) state.goal.rules = [];
-  if (editingRuleId) {
-    const r = state.goal.rules.find(x => x.id === editingRuleId);
-    if (r) r.text = text;
-  } else {
-    state.goal.rules.push({
-      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
-      text
-    });
-  }
-  state.goal.updatedAt = Date.now(); /* 触发云同步的 goal 合并 */
-  save();
-  markDirty();
-  closeRuleModal();
-  renderRules();
-  toast('规则已保存');
-}
-
-function deleteRule() {
-  if (!editingRuleId) return;
-  if (!confirm('删除这条规则？')) return;
-  state.goal.rules = (state.goal.rules || []).filter(x => x.id !== editingRuleId);
-  state.goal.updatedAt = Date.now();
-  save();
-  markDirty();
-  closeRuleModal();
-  renderRules();
-  toast('已删除');
-}
-
 /* ---------------- 破戒记录弹窗 ---------------- */
 
 let selectedTriggers = [];
@@ -915,150 +850,6 @@ function mergeHelpsFromCloud(cloudHelps) {
   for (const h of state.helps) touch(h);
   for (const h of cloudHelps) touch(h);
   state.helps = [...map.values()];
-}
-
-/* ---------------- 预案卡（如果-那么） ---------------- */
-
-const PLAN_ACTIONS = [
-  '🚪 立刻离开当前位置，换个房间或出门走两分钟',
-  '🧊 用冷水洗脸 / 冲手腕 30 秒',
-  '💪 做 20 个俯卧撑或深蹲到发酸',
-  '🔔 给朋友发条消息，或大声读一段文字',
-  '⏳ 设 10 分钟倒计时，等冲动峰值过去',
-  '🫁 4-7-8 呼吸 5 轮（吸4秒-屏7秒-呼8秒）'
-];
-let editingPlanId = null;
-
-function renderPlans() {
-  const card = $('planCard');
-  if (!state.plans.length) {
-    /* 未连接云端也能建预案，但 AI 推荐需要数据；始终显示入口引导 */
-    card.style.display = 'block';
-    $('planList').innerHTML = '<div class="diary-empty">提前把"如果…我就…"定好，冲动来时不用临场硬扛。先建一张兜底预案吧</div>';
-    return;
-  }
-  card.style.display = 'block';
-  const sorted = [...state.plans].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-  $('planList').innerHTML = sorted.map(p => {
-    const stat = (p.missed || p.used)
-      ? `<span class="plan-stat">关联破戒 ${(p.missed || 0) + (p.used || 0)} 次 · 执行 ${p.used || 0} 次</span>`
-      : '<span class="plan-stat">尚未实战过</span>';
-    return `<div class="plan-item">
-      <div class="plan-if"><b>如果</b> ${esc(p.ifText)}</div>
-      <div class="plan-then"><b>那么</b> ${esc(p.thenText)}</div>
-      <div class="plan-foot">${stat}
-        <span class="hi-actions">
-          <button class="chip-btn" data-pedit="${p.id}">编辑</button>
-          <button class="chip-btn hi-del" data-pdel="${p.id}">✕</button>
-        </span></div>
-    </div>`;
-  }).join('');
-}
-
-function openPlanModal(plan) {
-  editingPlanId = plan ? plan.id : null;
-  $('planIf').value = plan ? plan.ifText : '';
-  $('planThen').value = plan ? plan.thenText : '';
-  $('planActionChips').innerHTML = PLAN_ACTIONS.map(a => `<button type="button" class="chip-opt" data-action="${esc(a)}">${esc(a.split(' ')[0])}</button>`).join('');
-  $('planModal').classList.remove('hidden');
-}
-
-function closePlanModal() {
-  $('planModal').classList.add('hidden');
-}
-
-function savePlan() {
-  const ifText = $('planIf').value.trim();
-  const thenText = $('planThen').value.trim();
-  if (!ifText) { toast('请填写触发情境'); return; }
-  if (!thenText) { toast('请填写要执行的动作'); return; }
-  if (editingPlanId) {
-    const rec = state.plans.find(p => p.id === editingPlanId);
-    if (rec) { rec.ifText = ifText; rec.thenText = thenText; rec.updatedAt = Date.now(); }
-  } else {
-    state.plans.push({ id: 'p' + Date.now().toString(36), ifText, thenText, source: 'manual', createdAt: Date.now(), updatedAt: Date.now(), used: 0, missed: 0 });
-  }
-  save();
-  markDirty();
-  renderPlans();
-  closePlanModal();
-  toast('预案已保存 🛡️');
-}
-
-async function aiSuggestPlans() {
-  if (!state.cloud.connected || !state.cloud.code) { toast('请先在设置页连接云端同步'); return; }
-  const btn = $('btnAiPlan');
-  btn.disabled = true;
-  btn.textContent = '✨ AI 思考中…';
-  try {
-    const res = await fetch(SYNC_API.replace('/sync', '/suggest-plan'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code: state.cloud.code })
-    });
-    const data = await res.json();
-    if (!data.ok) throw new Error(data.error || '生成失败');
-    showPlanSuggestions(data.suggestions);
-  } catch (e) {
-    toast('AI 推荐失败：' + e.message);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = '✨ AI 推荐';
-  }
-}
-
-function showPlanSuggestions(list) {
-  $('planSuggestList').innerHTML = list.map((s, i) => `
-    <div class="plan-item">
-      <div class="plan-if"><b>如果</b> ${esc(s.ifText)}</div>
-      <div class="plan-then"><b>那么</b> ${esc(s.thenText)}</div>
-      <div class="modal-actions" style="margin-top:8px">
-        <button class="chip-btn" data-adopt="${i}">✔ 采用这张</button>
-      </div>
-    </div>`).join('');
-  window.__planSuggestions = list;
-  $('planSuggestModal').classList.remove('hidden');
-}
-
-function adoptPlan(idx) {
-  const s = (window.__planSuggestions || [])[idx];
-  if (!s) return;
-  state.plans.push({ id: 'p' + Date.now().toString(36), ifText: s.ifText, thenText: s.thenText, source: 'ai', createdAt: Date.now(), updatedAt: Date.now(), used: 0, missed: 0 });
-  save();
-  markDirty();
-  renderPlans();
-  $('planSuggestModal').classList.add('hidden');
-  toast('预案已采用 🛡️');
-}
-
-/* 破戒保存后的预案复盘 */
-let reviewRelapseId = null;
-function openRelapseReview(relapseId) {
-  reviewRelapseId = relapseId || null;
-  if (!state.plans.length) return; /* 没有预案不打扰 */
-  $('reviewPlanList').innerHTML = state.plans.map(p => `
-    <div class="review-plan">
-      <div class="plan-if"><b>如果</b> ${esc(p.ifText)}</div>
-      <div class="review-btns">
-        <button class="chip-btn" data-review="${p.id}:used">执行了但没拦住</button>
-        <button class="chip-btn" data-review="${p.id}:missed">没来得及执行</button>
-      </div>
-    </div>`).join('');
-  $('reviewModal').classList.remove('hidden');
-}
-
-function applyReview(pair) {
-  const [planId, outcome] = pair.split(':');
-  const rec = state.plans.find(p => p.id === planId);
-  if (rec) {
-    rec[outcome === 'used' ? 'used' : 'missed'] = (rec[outcome === 'used' ? 'used' : 'missed'] || 0) + 1;
-    rec.updatedAt = Date.now();
-    save();
-    markDirty();
-    renderPlans();
-  }
-  $('reviewModal').classList.add('hidden');
-  toast('已记录，预案会越来越准 📊');
 }
 
 /* ---------------- 成就系统 ---------------- */
@@ -1487,9 +1278,7 @@ function reRenderAll() {
   renderStats();
   renderHistory();
   renderDiaries();
-  renderPlans();
   renderAchievements();
-  renderRules();
   renderSettings();
 }
 
@@ -1531,19 +1320,6 @@ function bindEvents() {
   });
   $('btnUrgeFollow').addEventListener('click', followUrge);
   $('urgeFollowInput').addEventListener('keydown', e => { if (e.key === 'Enter') followUrge(); });
-
-  /* 底线规则 */
-  $('btnNewRule').addEventListener('click', () => openRuleModal(null));
-  $('ruleList').addEventListener('click', e => {
-    const btn = e.target.closest('[data-rule-edit]');
-    if (!btn) return;
-    const rule = (state.goal.rules || []).find(r => r.id === btn.dataset.ruleEdit);
-    if (rule) openRuleModal(rule);
-  });
-  $('btnRuleClose').addEventListener('click', closeRuleModal);
-  $('ruleModal').addEventListener('click', e => { if (e.target === $('ruleModal')) closeRuleModal(); });
-  $('btnRuleSave').addEventListener('click', saveRule);
-  $('btnRuleDelete').addEventListener('click', deleteRule);
 
   /* 破戒时是否看色情 */
   $('pornChips').addEventListener('click', e => {
@@ -1649,7 +1425,6 @@ function bindEvents() {
         ...payload
       });
       toast('已记录，重新开始 💪');
-      setTimeout(() => openRelapseReview(newId), 400); /* 预案复盘：仅新建时 */
     }
     save();
     closeRelapseModal();
@@ -1781,54 +1556,6 @@ function bindEvents() {
   $('btnDiarySave').addEventListener('click', saveDiary);
   $('btnDiaryClose').addEventListener('click', closeDiaryModal);
   $('diaryModal').addEventListener('click', e => { if (e.target === $('diaryModal')) closeDiaryModal(); });
-
-  /* 预案卡 */
-  $('btnNewPlan').addEventListener('click', () => openPlanModal(null));
-  $('btnAiPlan').addEventListener('click', aiSuggestPlans);
-  $('btnPlanSave').addEventListener('click', savePlan);
-  $('btnPlanClose').addEventListener('click', closePlanModal);
-  $('planModal').addEventListener('click', e => { if (e.target === $('planModal')) closePlanModal(); });
-  $('planActionChips').addEventListener('click', e => {
-    const btn = e.target.closest('[data-action]');
-    if (!btn) return;
-    const cur = $('planThen').value.trim();
-    const act = btn.dataset.action.replace(/^\S+\s/, ''); /* 去掉 emoji 前缀 */
-    if (cur && !cur.endsWith('，') && !cur.endsWith(';') && !cur.endsWith('；')) act && ($('planThen').value = cur + '，' + act);
-    else if (!cur) $('planThen').value = act;
-  });
-  $('planList').addEventListener('click', e => {
-    const editBtn = e.target.closest('[data-pedit]');
-    if (editBtn) {
-      const rec = state.plans.find(p => p.id === editBtn.dataset.pedit);
-      if (rec) openPlanModal(rec);
-      return;
-    }
-    const delBtn = e.target.closest('[data-pdel]');
-    if (delBtn) {
-      const rec = state.plans.find(p => p.id === delBtn.dataset.pdel);
-      if (!rec) return;
-      if (!confirm('删除这张预案卡？')) return;
-      state.plans = state.plans.filter(p => p.id !== rec.id);
-      state.deleted[rec.id] = Date.now();
-      save();
-      markDirty();
-      renderPlans();
-      toast('已删除');
-    }
-  });
-  $('planSuggestList').addEventListener('click', e => {
-    const adoptBtn = e.target.closest('[data-adopt]');
-    if (adoptBtn) adoptPlan(parseInt(adoptBtn.dataset.adopt, 10));
-  });
-  $('btnPlanSuggestClose').addEventListener('click', () => $('planSuggestModal').classList.add('hidden'));
-  $('planSuggestModal').addEventListener('click', e => { if (e.target === $('planSuggestModal')) $('planSuggestModal').classList.add('hidden'); });
-
-  /* 预案复盘 */
-  $('reviewPlanList').addEventListener('click', e => {
-    const btn = e.target.closest('[data-review]');
-    if (btn) applyReview(btn.dataset.review);
-  });
-  $('btnReviewSkip').addEventListener('click', () => $('reviewModal').classList.add('hidden'));
 
   /* 成就庆祝弹窗 */
   $('btnCelebClose').addEventListener('click', () => $('celebrateModal').classList.add('hidden'));

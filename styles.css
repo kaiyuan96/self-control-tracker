@@ -674,37 +674,6 @@ body::before {
   padding: 1px 8px;
 }
 
-/* 底线规则 */
-.rule-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  background: var(--glass-2);
-  border: 1px solid var(--glass-border);
-  border-left: 3px solid var(--gold);
-  border-radius: 12px;
-  padding: 11px 13px;
-  margin-bottom: 8px;
-  cursor: pointer;
-  transition: border-color 0.18s, background 0.18s;
-}
-.rule-item:hover { background: rgba(255, 255, 255, 0.06); border-color: var(--glass-border-bright); }
-.rule-num {
-  flex-shrink: 0;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: var(--gold-soft);
-  color: var(--gold);
-  font-size: 11px;
-  font-weight: 700;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  margin-top: 1px;
-}
-.rule-text { flex: 1; font-size: 13px; color: var(--text); line-height: 1.7; }
-
 /* 色情触发占比 */
 .porn-bar {
   height: 10px;
@@ -789,23 +758,8 @@ body::before {
 }
 #diaryModal textarea:focus, .modal textarea:focus { border-color: var(--accent); }
 
-/* 预案卡 */
-.plan-actions { display: flex; gap: 8px; margin-top: 12px; }
-.plan-item { border-radius: var(--radius-sm); padding: 11px 13px; margin-bottom: 8px; }
-.plan-if, .plan-then { font-size: 13px; color: var(--text-2); line-height: 1.75; word-break: break-word; }
-.plan-if b, .plan-then b {
-  display: inline-block;
-  font-size: 11px;
-  padding: 1px 7px;
-  border-radius: 6px;
-  margin-right: 6px;
-}
-.plan-if b { background: rgba(139, 124, 255, 0.16); color: #b9acff; }
-.plan-then b { background: rgba(52, 211, 153, 0.15); color: var(--green); }
-.plan-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 7px; }
-.plan-stat { font-size: 11px; color: var(--text-3); }
-.review-plan { border-radius: var(--radius-sm); padding: 11px 13px; margin-bottom: 10px; }
-.review-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 7px; }
+/* 卡片内按钮行（AI 卡片等处复用） */
+.plan-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
 
 .empty { text-align: center; color: var(--text-2); padding: 44px 20px; }
 .empty-icon { font-size: 40px; margin-bottom: 8px; filter: saturate(0.8); }

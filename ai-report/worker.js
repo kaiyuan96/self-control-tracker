@@ -148,11 +148,7 @@ function buildPrompt(goal, weekRecords, range, allRecords, weekDiaries, userPlan
     '字段说明：time=记录时间（北京时间 YYYY-MM-DD HH:mm，精确到分），mood=当天心情标记(😊开心 🙂不错 😐一般 😞低落 😫疲惫 😡烦躁)，content=用户亲笔写下的当日心情与经历。',
     weekDiaries.length ? '分析情绪线索时，请对比日记时间与破戒时间的先后：日记先于破戒出现→该情绪可能是前兆信号；破戒之后才写→多是事后反思。' : '',
     '',
-    '== 第四部分：用户的"如果-那么"预案卡及使用情况 ==',
-    (userPlans && userPlans.length) ? JSON.stringify(userPlans) : '（用户还没有建立任何预案）',
-    '字段说明：if=触发情境，then=预定动作，missed=破戒时没执行该预案的次数，used=执行了但未拦住的次数。',
-    '',
-    '（分析时可以关注这些角度，但不是必须逐条覆盖：时段与诱因的模式、porn 维度——若多数破戒伴随色情内容则"接触内容"才是起点，建议应聚焦阻断入口而非硬扛冲动；若多数是纯生理冲动则重点在情绪与疲惫管理、也要对比本周与全历史的色情占比差异、日记情绪与破戒的时序关联、以及预案的 missed/used 说明了什么。）',
+    '（分析时可以关注这些角度，但不是必须逐条覆盖：时段与诱因的模式、porn 维度——若多数破戒伴随色情内容则"接触内容"才是起点，建议应聚焦阻断入口而非硬扛冲动；若多数是纯生理冲动则重点在情绪与疲惫管理、也要对比本周与全历史的色情占比差异、日记情绪与破戒的时序关联。）',
     '',
     (reportHistory && reportHistory.length
       ? '== 第五部分：你之前几周写给这位用户的报告（这是同一场连续对话，请接续它） ==\n' +
@@ -165,7 +161,7 @@ function buildPrompt(goal, weekRecords, range, allRecords, weekDiaries, userPlan
     '1. 真正基于数据说话：引用具体的次数、时间点、诱因、日记里的原话，不要泛泛而谈。',
     '2. 有洞察：指出模式、变化与可能的因果，特别是「和之前比变了什么」。',
     '3. 如果这是连续对话（见第五部分），要接续上文，不要像第一次见面那样重新开始。',
-    '4. 结尾给 2-3 条具体可执行的小行动（每条一行，以 · 开头）。若用户已有预案，结合 missed/used 评估哪张需要修改。',
+    '4. 结尾给 2-3 条具体可执行的小行动（每条一行，以 · 开头）。',
     '5. 语气像理解他的朋友：不说教、不评判、不喊口号；也不必刻意煽情。',
     '',
     '长度自然即可（大致 300-600 字），直接输出周报内容，不要写"好的，这是您的报告"之类的开场白。'
@@ -235,10 +231,7 @@ async function generateReportForAccount(env, code) {
     .map(({ _ts, ...d }) => d);
 
   /* 上周零记录：也生成一份简短鼓励报告 */
-  let userPlans = [];
-  try { userPlans = JSON.parse(row.plans || '[]'); } catch (e) {}
-  const planData = userPlans.map(p => ({ if: p.ifText, then: p.thenText, missed: p.missed || 0, used: p.used || 0 }));
-  const content = await callDeepSeek(env, buildPrompt(goal, weekRecords, range, mapped, weekDiaries, planData, reportHistory), 1200);
+  const content = await callDeepSeek(env, buildPrompt(goal, weekRecords, range, mapped, weekDiaries, null, reportHistory), 1200);
 
   /* 追加进会话历史（保留最近 12 期），同一周重复生成则覆盖 */
   const history = reportHistory.filter(h => h.week !== range.weekLabel);
@@ -373,19 +366,10 @@ async function helpForAccount(env, code, state, message, history) {
     ? `有记录的 ${rated.length} 次破戒中，${pornCnt} 次伴随色情内容（${Math.round((pornCnt / rated.length) * 100)}%）。`
     : '';
 
-  /* 用户给自己定的底线规则 */
-  const userRules = Array.isArray(goal.rules) && goal.rules.length
-    ? goal.rules.map(r => '· ' + r.text).join('\n')
-    : '';
-
   /* 最近 3 篇日记（情绪 + 内容） */
   const recentDiaries = [...diaries].sort((a, b) => (a.time || '') < (b.time || '') ? 1 : -1).slice(0, 3).map(d =>
     `${(d.time || '').slice(0, 16).replace('T', ' ')} ${d.mood || ''}「${(d.content || '').slice(0, 60)}」`
   ).join('\n') || '（还没写日记）';
-
-  const planBrief = plans.length
-    ? plans.slice(0, 3).map(p => `如果${p.ifText}→那么${p.thenText}`).join('；')
-    : '（尚未建立预案）';
 
   /* 当前北京时间，供 AI 计算"今天/昨天/前天"的相对时间 */
   const nowBJ = toBJStr(new Date().toISOString());
@@ -403,8 +387,6 @@ async function helpForAccount(env, code, state, message, history) {
     pornLine,
     `最近破戒记录（北京时间）：\n${recentRelapses}`,
     `最近的日记心情：\n${recentDiaries}`,
-    `已有预案：${planBrief}。`,
-    userRules ? `\n== 用户给自己定的底线规则（干预时要主动引用，帮 ta 想起来） ==\n${userRules}` : '',
     '',
     `当前状态：${URGE_STATES[state] || URGE_STATES.active_urge}`,
     `用户此刻说的话：${message ? '「' + message + '」' : '（ta 没说话，请根据最近日记的情绪和最近破戒的时段推断 ta 此刻的可能状态）'}`,
@@ -419,7 +401,6 @@ async function helpForAccount(env, code, state, message, history) {
     '- 平静：简短肯定，问一个有用的问题。',
     '- 刚破戒：明确告诉 ta"这是一次数据点，不是判决"（结合历史最长连续，如"你曾连续 21 天，那不是运气"）；再给一句贴合情绪的历史人物语录；最后问"这件事发生在几点？告诉我，我在那个时段前提醒你。"',
     '第三步【邀请继续】：这是对话的一部分。可以自然地接上一句邀请（如"做完感觉怎么样？"或"如果冲动还在，就告诉我"），但不要问那种必须等回复才成立的话。',
-    userRules ? '特别注意：如果用户有自己的底线规则（见上文），请在共情或行动里自然地引用一条（例如"记得你自己定的：想自慰时先等十五分钟再决定——现在就开始这十五分钟"），帮 ta 想起自己许下的承诺。不要生硬复述全部规则。' : '',
     pornLine ? '注意：如果数据显示色情内容是 ta 的主要触发源，可以在共情时点出这个模式（"你的记录显示多半是看了内容之后发生的"），但不要说教。' : '',
     '',
     '整体要求：直接输出内容，不要解释你在做什么、不要加引号标题；总长不超过 220 字；语气像懂 ta 的朋友，温暖但不煽情。'
