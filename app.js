@@ -1559,8 +1559,6 @@ function bindEvents() {
 
   /* 成就庆祝弹窗 */
   $('btnCelebClose').addEventListener('click', () => $('celebrateModal').classList.add('hidden'));
-  $('reviewModal').addEventListener('click', e => { if (e.target === $('reviewModal')) $('reviewModal').classList.add('hidden'); });
-  $('btnDiarySave').addEventListener('click', saveDiary);
   $('diaryMoods').addEventListener('click', e => {
     const btn = e.target.closest('[data-mood]');
     if (!btn) return;
