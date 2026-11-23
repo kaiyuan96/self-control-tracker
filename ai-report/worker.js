@@ -1,9 +1,12 @@
 'use strict';
 /* ============================================================
-   每周 AI 分析定时任务（Cloudflare Cron Worker + DeepSeek）
-   - Cron：每周一 UTC 00:00（北京 08:00）为所有账号生成上周分析
-   - 逻辑与 functions/api/generate-report.js 保持一致
-     （两处需同步维护：generateReportForAccount / buildPrompt / lastWeekRange）
+   AI 分析服务（Cloudflare Worker + DeepSeek）
+   端点：
+     POST /       body {code}                  → 手动生成分析（唯一入口）
+     POST /help   body {code,state,message,history} → 紧急求助干预
+   - 无 Cron 定时任务：分析只在用户点击时生成
+   - 分析区间 = 距上次分析以来（首次/久未分析则回溯 7 天）
+   - 经 functions/api/generate-report.js 与 help.js 代理访问
    ============================================================ */
 
 const CORS = {
@@ -39,17 +42,19 @@ function ensureSchema(env) {
   return schemaReady;
 }
 
-/* 北京时间视角的"上周一 00:00 ~ 本周一 00:00"（返回 UTC 毫秒） */
-function lastWeekRange() {
-  const bj = new Date(Date.now() + 8 * 3600000);   // 北京时间
-  const day = (bj.getUTCDay() + 6) % 7;            // 0=周一
-  const thisMonUtcMs = Date.UTC(bj.getUTCFullYear(), bj.getUTCMonth(), bj.getUTCDate()) - day * 86400000 - 8 * 3600000;
-  const lastMonUtcMs = thisMonUtcMs - 7 * 86400000;
-  const labelStart = new Date(lastMonUtcMs + 8 * 3600000);
-  const labelEnd = new Date(thisMonUtcMs + 8 * 3600000);
+/* 手动分析的时间窗口：从"上次分析的时刻"到现在
+   （首次或久未分析则回溯 7 天；最少 1 天、最多 60 天，避免区间为空或过长） */
+function analysisWindow(history) {
   const pad = n => String(n).padStart(2, '0');
-  const f = d => `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
-  return { start: lastMonUtcMs, end: thisMonUtcMs, weekLabel: `${f(labelStart)} ~ ${f(labelEnd)}` };
+  const f = ms => { const d = new Date(ms + 8 * 3600000); return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`; };
+  const now = Date.now();
+  let start = now - 7 * 86400000;
+  const stamps = (history || []).map(h => h.generatedAt || 0).filter(Boolean);
+  if (stamps.length) {
+    const last = Math.max(...stamps);
+    if (now - last >= 1 * 86400000) start = Math.max(last, now - 60 * 86400000);
+  }
+  return { start, end: now, label: `${f(start)} ~ ${f(now)}` };
 }
 
 /* ISO → 北京时间字符串（AI 按字面阅读，必须给本地时间） */
@@ -137,34 +142,35 @@ function buildPrompt(goal, weekRecords, range, allRecords, weekDiaries, userPlan
     buildHistorySummary(allRecords),
     goal.name ? `目标名称：${goal.name}；计划开始于 ${goal.startedAt}。` : '',
     '',
-    `== 第二部分：上一周（${range.weekLabel}）的破戒记录逐条明细 ==`,
+    `== 第二部分：这一次要看的区间（${range.label}）内的破戒记录 ==`,
     JSON.stringify(weekRecords),
     '字段说明：time=发生时间（北京时间 YYYY-MM-DD HH:mm），triggers=诱因标签数组，severity=严重程度1-5，porn=这次破戒前是否看了色情内容（"看了色情内容"/"没看色情(纯生理冲动)"/"未填"），note=用户当时写下的备注原文。',
-    segLine,
-    weekPornLine,
+    segLine.replace('上周时段分布', '这段区间时段分布'),
+    weekPornLine.replace('上周色情情况', '这段区间色情情况'),
     '',
-    '== 第三部分：上一周的日记原文 ==',
-    weekDiaries.length ? JSON.stringify(weekDiaries) : '（上周未写日记）',
+    `== 第三部分：同一区间内的日记原文 ==`,
+    weekDiaries.length ? JSON.stringify(weekDiaries) : '（这段区间没有写日记）',
     '字段说明：time=记录时间（北京时间 YYYY-MM-DD HH:mm，精确到分），mood=当天心情标记(😊开心 🙂不错 😐一般 😞低落 😫疲惫 😡烦躁)，content=用户亲笔写下的当日心情与经历。',
-    weekDiaries.length ? '分析情绪线索时，请对比日记时间与破戒时间的先后：日记先于破戒出现→该情绪可能是前兆信号；破戒之后才写→多是事后反思。' : '',
+    weekDiaries.length ? '分析情绪线索时，可以对比日记时间与破戒时间的先后：日记先于破戒出现→该情绪可能是前兆信号；破戒之后才写→多是事后反思。' : '',
     '',
-    '（分析时可以关注这些角度，但不是必须逐条覆盖：时段与诱因的模式、porn 维度——若多数破戒伴随色情内容则"接触内容"才是起点，建议应聚焦阻断入口而非硬扛冲动；若多数是纯生理冲动则重点在情绪与疲惫管理、也要对比本周与全历史的色情占比差异、日记情绪与破戒的时序关联。）',
+    '（以下只是可参考的角度，不必覆盖，也不必按顺序：时段与诱因的模式、porn 维度——若多数破戒伴随色情内容则"接触内容"才是起点；若多为纯生理冲动则重点在情绪与疲惫；本区间与全历史的差异；日记情绪与破戒的时序关联。）',
     '',
     (reportHistory && reportHistory.length
-      ? '== 第五部分：你之前几周写给这位用户的报告（这是同一场连续对话，请接续它） ==\n' +
+      ? '== 第四部分：你之前写给这位用户的报告（同一场连续对话，请接续它） ==\n' +
         reportHistory.map(h => `【${h.week}】\n${h.content}`).join('\n\n') + '\n' +
-        '请注意：这是你与用户持续进行的对话。这次要自然地接续之前的内容——比如上周你给过什么建议、指出过什么模式，这周数据有没有印证或推翻它；如果建议奏效就明确说出来，如果没奏效就换个思路，不要重复上周已经说过的话。'
+        '请注意：这是你与用户持续进行的对话。自然地接续之前的内容——之前你给过什么建议、指出过什么模式，这次的数据有没有印证或推翻它。如果之前的建议奏效就明确说出来，没奏效就换个思路。不要重复已经说过的话。'
       : ''),
     '',
-    '== 请写这一周的周报 ==',
-    '你可以自由决定怎么写、用什么结构——不必套用固定模板，可以用分析、可以用聊天口吻、可以只讲你认为最重要的两三件事。但请做到：',
-    '1. 真正基于数据说话：引用具体的次数、时间点、诱因、日记里的原话，不要泛泛而谈。',
-    '2. 有洞察：指出模式、变化与可能的因果，特别是「和之前比变了什么」。',
-    '3. 如果这是连续对话（见第五部分），要接续上文，不要像第一次见面那样重新开始。',
-    '4. 结尾给 2-3 条具体可执行的小行动（每条一行，以 · 开头）。',
-    '5. 语气像理解他的朋友：不说教、不评判、不喊口号；也不必刻意煽情。',
+    '== 现在，说你想说的 ==',
+    '用户主动点了分析，想听你说说。你不必写"报告"——可以是一段话、几个观察、一个反问、只指出一件你觉得最重要的事，甚至可以先问他现在最关心什么。',
+    '唯一的底线：',
+    '· 基于数据说话，引用具体的次数、日期、时间点、日记原话。不要写放在谁身上都成立的空话。',
+    '· 说点真的洞察——数据里别人看不出来的东西，尤其是"和之前比变了什么"。',
+    '· 若在接续对话（见第四部分），接着上次的话说，不要像第一次见面那样重新开始。',
+    '· 语气像理解他的朋友：不说教、不评判、不喊口号、不刻意煽情。',
+    '· 想给建议就给，不想给也可以不给——不必为了凑数列行动清单。',
     '',
-    '长度自然即可（大致 300-600 字），直接输出周报内容，不要写"好的，这是您的报告"之类的开场白。'
+    '长度由你判断：该长则长，该短则短。直接输出内容，不要写"好的，以下是分析"这类开场白。'
   ];
   return lines.filter(Boolean).join('\n');
 }
@@ -203,15 +209,16 @@ async function generateReportForAccount(env, code) {
   const goal = (() => { try { return JSON.parse(row.goal || '{}'); } catch (e) { return {}; } })();
   let allDiaries = [];
   try { allDiaries = JSON.parse(row.diaries || '[]'); } catch (e) {}
-  /* 之前几周的报告（连续会话上下文） */
+  /* 之前几期的报告（连续会话上下文） */
   let reportHistory = [];
   try { reportHistory = JSON.parse(row.ai_report_history || '[]'); } catch (e) {}
+  const fullHistory = reportHistory;
   reportHistory = reportHistory.slice(-4); /* 只带最近 4 期，控制长度 */
 
-  const range = lastWeekRange();
+  const range = analysisWindow(fullHistory);
   /* 是否看色情 → 可读标签（AI 按字面理解，用中文比布尔值更准） */
   const pornLabel = v => v === true ? '看了色情内容' : v === false ? '没看色情(纯生理冲动)' : '未填';
-  /* 先按原始 ISO 过滤上周，再把时间转成北京时间字符串给 AI */
+  /* 先按原始 ISO 过滤窗口内的记录，再把时间转成北京时间字符串给 AI */
   const weekRaw = all.filter(r => { const t = new Date(r.time).getTime(); return t >= range.start && t < range.end; });
   const weekRecords = weekRaw
     .map(r => ({ time: toBJStr(r.time), triggers: r.triggers || [], severity: r.severity || 0, porn: pornLabel(r.porn), note: (r.note || '').slice(0, 300) }))
@@ -230,88 +237,19 @@ async function generateReportForAccount(env, code) {
     .sort((a, b) => a.time < b.time ? -1 : 1)
     .map(({ _ts, ...d }) => d);
 
-  /* 上周零记录：也生成一份简短鼓励报告 */
-  const content = await callDeepSeek(env, buildPrompt(goal, weekRecords, range, mapped, weekDiaries, null, reportHistory), 1200);
+  const content = await callDeepSeek(env, buildPrompt(goal, weekRecords, range, mapped, weekDiaries, null, reportHistory), 2000);
 
-  /* 追加进会话历史（保留最近 12 期），同一周重复生成则覆盖 */
-  const history = reportHistory.filter(h => h.week !== range.weekLabel);
-  history.push({ week: range.weekLabel, content, generatedAt: Date.now() });
+  /* 追加进会话历史（保留最近 12 期） */
+  const history = [...fullHistory];
+  history.push({ week: range.label, content, generatedAt: Date.now() });
   const trimmed = history.slice(-12);
 
   await env.abstinence_db
     .prepare('UPDATE accounts SET ai_report = ?, ai_report_week = ?, ai_report_history = ? WHERE code = ?')
-    .bind(content, range.weekLabel, JSON.stringify(trimmed), code)
+    .bind(content, range.label, JSON.stringify(trimmed), code)
     .run();
 
-  return { content, week: range.weekLabel, count: weekRecords.length, historyCount: trimmed.length };
-}
-
-async function runWeeklyReports(env) {
-  await ensureSchema(env);
-  const rows = await env.abstinence_db.prepare('SELECT code FROM accounts').all();
-  for (const r of rows.results) {
-    try {
-      await generateReportForAccount(env, r.code);
-      console.log('report ok:', r.code.slice(0, 3) + '***');
-    } catch (e) {
-      console.error('report failed:', r.code.slice(0, 3) + '***', e.message);
-    }
-  }
-}
-
-/* AI 预案推荐：基于账号历史诱因/时段生成 3 条 if-then 预案候选 */
-async function suggestPlansForAccount(env, code) {
-  await ensureSchema(env);
-  const row = await env.abstinence_db
-    .prepare('SELECT goal, relapses, diaries, plans FROM accounts WHERE code = ?')
-    .bind(code).first();
-  if (!row) throw new Error('账号不存在');
-
-  let all = [];
-  try { all = JSON.parse(row.relapses || '[]'); } catch (e) {}
-  let plans = [];
-  try { plans = JSON.parse(row.plans || '[]'); } catch (e) {}
-  const goal = (() => { try { return JSON.parse(row.goal || '{}'); } catch (e) { return {}; } })();
-
-  /* 高频诱因与高危时段（北京时间） */
-  const tf = {}; const segs = {};
-  for (const r of all) {
-    for (const t of (r.triggers || [])) tf[t] = (tf[t] || 0) + 1;
-    const h = toBJHour(r.time);
-    const seg = h < 6 ? '凌晨' : h < 12 ? '上午' : h < 18 ? '下午' : '晚上';
-    segs[seg] = (segs[seg] || 0) + 1;
-  }
-  const topTf = Object.entries(tf).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([t, c]) => `${t}(${c}次)`);
-  const topSegs = Object.entries(segs).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}${v}次`);
-  const existingPlans = plans.map(p => ({ if: p.ifText, then: p.thenText }));
-
-  /* 色情触发占比：决定预案是否该针对"接触内容"这一步 */
-  const ratedP = all.filter(r => typeof r.porn === 'boolean');
-  const pornPct = ratedP.length >= 3 ? Math.round((ratedP.filter(r => r.porn === true).length / ratedP.length) * 100) : null;
-
-  const prompt = [
-    '你是一位自律习惯教练。用户在用一款「自律打卡」应用，需要建立"如果-那么"执行意图预案卡来应对冲动。',
-    goal.name ? `目标：${goal.name}。` : '',
-    `历史高频诱因：${topTf.length ? topTf.join('、') : '暂无记录'}；高危时段：${topSegs.length ? topSegs.join('、') : '暂无记录'}。`,
-    pornPct != null ? `重要：${ratedP.length} 次破戒中有 ${pornPct}% 伴随色情内容——如果占比过半，请至少给出一条针对"刚接触/即将打开色情内容"这一起点的预案（例如：手指伸向搜索框时立刻锁屏并把手机放到另一个房间）。` : '',
-    existingPlans.length ? `已有预案：${JSON.stringify(existingPlans)}（新建议须与它们不同）。` : '尚无预案。',
-    '',
-    '请生成 3 条预案候选，严格输出 JSON 数组（不要任何其他文字、不要 markdown 代码块标记）：',
-    '[{"if":"具体情境（含时间/地点/状态，20字内）","then":"立刻可执行的具体动作（30字内，从物理离开现场/冷刺激/身体消耗/注意力切换/延迟等待/呼吸调节中选择组合）"}]',
-    '要求：每条针对不同诱因场景；动作必须 10 秒内能开始执行；语气平实不说教。'
-  ].filter(Boolean).join('\n');
-
-  const text = await callDeepSeek(env, prompt);
-  /* 容错解析 JSON 数组 */
-  const start = text.indexOf('['); const end = text.lastIndexOf(']');
-  if (start === -1 || end === -1) throw new Error('AI 返回格式异常');
-  const arr = JSON.parse(text.slice(start, end + 1));
-  const suggestions = (Array.isArray(arr) ? arr : [])
-    .filter(s => s && s.if && s.then)
-    .slice(0, 3)
-    .map(s => ({ ifText: String(s.if).slice(0, 60), thenText: String(s.then).slice(0, 100) }));
-  if (!suggestions.length) throw new Error('AI 未返回有效预案');
-  return { suggestions };
+  return { content, week: range.label, count: weekRecords.length, historyCount: trimmed.length };
 }
 
 /* ---------------- 紧急求助（IronMind 干预协议） ---------------- */
@@ -411,9 +349,7 @@ async function helpForAccount(env, code, state, message, history) {
 }
 
 export default {
-  async scheduled(event, env, ctx) {
-    ctx.waitUntil(runWeeklyReports(env));
-  },
+  /* 无定时任务：只有用户手动点"分析"时才会生成 */
   async fetch(request, env) {
     if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
     const url = new URL(request.url);
@@ -432,18 +368,7 @@ export default {
         return json({ ok: false, error: e.message }, 500);
       }
     }
-    if (request.method === 'POST' && url.pathname === '/suggest') {
-      try {
-        const body = await request.json();
-        const code = String(body.code || '').trim().toUpperCase();
-        if (!code) return json({ ok: false, error: '缺少访问码' }, 400);
-        const data = await suggestPlansForAccount(env, code);
-        return json({ ok: true, ...data });
-      } catch (e) {
-        return json({ ok: false, error: e.message }, 500);
-      }
-    }
-    /* 手动触发端点：POST /  body {code} → 立即为该账号生成分析 */
+    /* 手动分析端点：POST /  body {code} → 立即为该账号生成分析 */
     if (request.method === 'POST' && url.pathname === '/') {
       try {
         const body = await request.json();

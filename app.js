@@ -297,7 +297,7 @@ async function regenerateAI() {
     toast('生成失败：' + e.message);
   } finally {
     btn.disabled = false;
-    btn.textContent = '🔄 让 AI 重新分析';
+    btn.textContent = '🤖 让 AI 分析';
   }
 }
 

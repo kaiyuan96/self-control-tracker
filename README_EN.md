@@ -3,7 +3,7 @@
 # Self-Control Tracker
 
 **A privacy-first streak & habit tracker for breaking unwanted habits**
-Relapse logging · Trigger analysis · If-Then coping plans · AI weekly coach · Cross-device sync
+Relapse logging · Trigger analysis · Mood journal · AI deep analysis · Urge help · Cross-device sync
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 ![Vanilla JS](https://img.shields.io/badge/Vanilla-JS-f7df1e)
@@ -29,31 +29,33 @@ dopamine detox challenges, and relapse-prevention routines.
 
 ### Core tracking
 - ⏱️ **Live streak timer** — days clean, precise to the second
-- ⚠️ **Relapse logging** — time (backdate any moment) / trigger tags / severity / notes; everything editable & deletable
+- ⚠️ **Relapse logging** — time (backdate any moment) / trigger tags / severity / whether porn was involved / notes; everything editable & deletable
 - 📝 **Mood journal** — minute-precision daily notes to catch emotional shifts before they escalate
+- 📅 **Unified timeline** — journal, relapses and AI interventions side by side per day
 
 ### Insights
 - 📊 **Statistics** — weekly/monthly counts with week-over-week comparison, longest streak, 12-week & 6-month trend charts
-- 🎯 **Trigger analysis** — top triggers ranking, time-of-day distribution (early morning / morning / afternoon / night)
-- 🤖 **AI weekly coach** (optional) — powered by DeepSeek; every week it reads your relapse details, journal entries and their time-order, then writes a personal analysis with concrete suggestions
+- 🎯 **Trigger analysis** — top triggers ranking, time-of-day distribution, porn-involvement ratio
+- 🤖 **AI deep analysis** (optional) — powered by DeepSeek, **generated only when you click**: the window automatically covers everything since your last analysis, and it remembers previous sessions like an ongoing conversation
+- 🆘 **Urge help** (optional) — pick your state (active urge / drifting / just relapsed / calm) and get matched intervention; supports multi-turn follow-up
 
-### Behavior-change tools
-- 🛡️ **If-Then plans** — built on the *Implementation Intentions* research ("If situation X, I will do Y"): decide in advance instead of white-knuckling in the moment; AI can draft candidate plans from your high-risk windows and top triggers
-- 🔄 **Relapse review loop** — after each relapse, log whether a plan was executed; the data flows back so plans keep improving
+### Positive reinforcement
+- 🏆 **Achievements** — 7 / 14 / 21 / 35 / 84 / 183 / 365-day milestones, unlocked by all-time best streak, never reset by a relapse
+- 🌤️ **Stage tips** — physical and psychological expectations that shift with your streak
 
 ### Sync & privacy
 - ☁️ **Cross-device sync** (optional) — access-code based, no account needed; share one dataset between phone and desktop
 - 🔒 **Privacy first** — collects nothing; in offline mode data lives only in your browser
-- 💾 **Data ownership** — one-click JSON export / import
+- 💾 **Data ownership** — one-click JSON export / import (export includes a time-sorted unified timeline)
 
 ## 🧠 Evidence-based design
 
 | Feature | Backed by |
 |---------|-----------|
 | Streak timer & relapse log | Self-monitoring: tracking a behavior alone changes it |
-| If-Then plans | Implementation Intentions (Gollwitzer & Sheeran meta-analysis, d≈0.65) |
-| Plan review loop | Relapse Prevention: situation-coping training |
+| Urge-help state routing | Urges peak and fade within 3–7 minutes; action before analysis, low-shame framing |
 | Non-judgmental AI tone | Shame amplifies relapse cycles; self-compassion works better |
+| Achievement system | Positive reinforcement & self-efficacy: making invisible persistence visible |
 
 ## 🚀 Getting started
 
@@ -78,13 +80,13 @@ No build step, no `npm install` — the whole project is 3 static files plus 2 l
 Architecture: static frontend + a `/api/sync` endpoint + SQLite storage.
 Your access code is the key to your data — keep it safe.
 
-## 🤖 AI weekly coach setup (optional)
+## 🤖 AI coach setup (optional)
 
 Bring your own DeepSeek API key ([platform.deepseek.com](https://platform.deepseek.com), very cheap):
 
 1. Provide it as the environment secret `DEEPSEEK_API_KEY`
-2. Deploy the scheduled task in `ai-report/` (runs every Monday morning by default)
-3. Users can also tap "Regenerate AI analysis" in-app anytime
+2. Deploy the Worker in `ai-report/` (**no cron** — it only serves manual requests)
+3. Analysis is generated only when you tap "Let AI analyze"; the window covers everything since your last analysis
 
 Everything else works fine without it.
 
@@ -92,8 +94,7 @@ Everything else works fine without it.
 
 The frontend is fully static — host it anywhere. The server endpoints in `functions/api/`
 use standard Request/Response semantics and can be adapted to major serverless platforms
-(Vercel, Netlify, Cloudflare Pages, …) with minimal changes. See `ai-report/` for the
-scheduled analysis job.
+(Vercel, Netlify, Cloudflare Pages, …) with minimal changes. See `ai-report/` for the AI service.
 
 ## 📁 Project structure
 
@@ -103,12 +104,13 @@ self-control-tracker/
 ├── styles.css              # dark theme
 ├── app.js                  # app logic (data / stats / charts / sync)
 ├── server.js               # local static server (optional)
+├── tools/                  # helper scripts (smoke test / history analysis)
 ├── functions/api/
 │   ├── sync.js             # sync API (conflict-safe merging)
-│   ├── generate-report.js  # AI weekly report (proxy)
-│   └── suggest-plan.js     # AI plan suggestions (proxy)
+│   ├── generate-report.js  # AI manual analysis (proxy)
+│   └── help.js             # urge help (proxy)
 ├── ai-report/
-│   └── worker.js           # scheduled AI analysis job (cron)
+│   └── worker.js           # AI analysis + urge help service (DeepSeek)
 └── LICENSE
 ```
 
