@@ -82,11 +82,22 @@ Your access code is the key to your data — keep it safe.
 
 ## 🤖 AI coach setup (optional)
 
-Bring your own DeepSeek API key ([platform.deepseek.com](https://platform.deepseek.com), very cheap):
+Supports **DeepSeek** or **Gemini** — both expose OpenAI-compatible APIs, so switching is config-only:
 
-1. Provide it as the environment secret `DEEPSEEK_API_KEY`
+| Env var | Notes |
+|---|---|
+| `DEEPSEEK_API_KEY` | from [platform.deepseek.com](https://platform.deepseek.com), very cheap |
+| `GEMINI_API_KEY` | from [aistudio.google.com](https://aistudio.google.com), has a free tier |
+| `AI_PROVIDER` | optional: `deepseek` / `gemini` / `auto` (default auto: prefers Gemini when its key exists) |
+| `AI_MODEL` | optional: override the default model name |
+
+1. Provide the key(s) as environment secrets
 2. Deploy the Worker in `ai-report/` (**no cron** — it only serves manual requests)
 3. Analysis is generated only when you tap "Let AI analyze"; the window covers everything since your last analysis
+
+If the preferred provider fails, the other one is tried automatically.
+
+> ⚠️ **Privacy note**: Gemini's *free tier* falls under Google's "Unpaid Services" terms, which state that your data is used to improve their products, and ask you not to submit sensitive or personal information. This app's data is highly sensitive — prefer the paid tier or a different provider if that matters to you.
 
 Everything else works fine without it.
 

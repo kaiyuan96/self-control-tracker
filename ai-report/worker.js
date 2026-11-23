@@ -175,26 +175,72 @@ function buildPrompt(goal, weekRecords, range, allRecords, weekDiaries, userPlan
   return lines.filter(Boolean).join('\n');
 }
 
-async function callDeepSeek(env, prompt, maxTokens = 800) {
-  if (!env.DEEPSEEK_API_KEY) throw new Error('未配置 DEEPSEEK_API_KEY');
-  const res = await fetch('https://api.deepseek.com/chat/completions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + env.DEEPSEEK_API_KEY },
-    body: JSON.stringify({
-      model: 'deepseek-chat',
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.7,
-      max_tokens: maxTokens
-    })
-  });
-  if (!res.ok) {
-    const t = await res.text();
-    throw new Error('DeepSeek API 错误 ' + res.status + ': ' + t.slice(0, 200));
+/* ---------------- AI 调用（DeepSeek / Gemini 可切换） ----------------
+   两家都提供 OpenAI 兼容接口，因此共用同一段调用代码：
+   - AI_PROVIDER = 'deepseek' | 'gemini' | 'auto'（默认 auto）
+   - auto：有 Gemini key 就优先 Gemini，否则用 DeepSeek
+   - 主用失败时自动降级到另一家（若配了它的 key）
+   - AI_MODEL 可覆盖默认模型名
+   ---------------------------------------------------------------- */
+const AI_PROVIDERS = {
+  deepseek: {
+    label: 'DeepSeek',
+    url: 'https://api.deepseek.com/chat/completions',
+    keyEnv: 'DEEPSEEK_API_KEY',
+    defaultModel: 'deepseek-chat'
+  },
+  gemini: {
+    label: 'Gemini',
+    url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+    keyEnv: 'GEMINI_API_KEY',
+    defaultModel: 'gemini-2.5-flash'
   }
-  const data = await res.json();
-  const text = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
-  if (!text) throw new Error('AI 返回为空');
-  return text.trim();
+};
+
+/* 返回按优先级排序的可用 provider 列表 */
+function providerOrder(env) {
+  const prefer = String(env.AI_PROVIDER || 'auto').trim().toLowerCase();
+  const has = k => !!(env[AI_PROVIDERS[k].keyEnv]);
+  if (prefer === 'deepseek' || prefer === 'gemini') {
+    return [prefer, ...Object.keys(AI_PROVIDERS).filter(k => k !== prefer)].filter(has);
+  }
+  /* auto：Gemini 有免费额度，优先；否则 DeepSeek */
+  return ['gemini', 'deepseek'].filter(has);
+}
+
+async function callAI(env, prompt, maxTokens = 800) {
+  const order = providerOrder(env);
+  if (!order.length) throw new Error('未配置任何 AI 密钥（DEEPSEEK_API_KEY 或 GEMINI_API_KEY）');
+  let lastErr = null;
+  for (const key of order) {
+    const p = AI_PROVIDERS[key];
+    const apiKey = env[p.keyEnv];
+    if (!apiKey) continue;
+    const model = String(env.AI_MODEL || '').trim() || p.defaultModel;
+    try {
+      const res = await fetch(p.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.7,
+          max_tokens: maxTokens
+        })
+      });
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(`${p.label} ${res.status}: ${t.slice(0, 200)}`);
+      }
+      const data = await res.json();
+      const text = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+      if (!text) throw new Error(p.label + ' 返回为空');
+      return text.trim();
+    } catch (e) {
+      lastErr = e; /* 换下一家 */
+    }
+  }
+  throw lastErr || new Error('AI 调用失败');
 }
 
 async function generateReportForAccount(env, code) {
@@ -237,7 +283,7 @@ async function generateReportForAccount(env, code) {
     .sort((a, b) => a.time < b.time ? -1 : 1)
     .map(({ _ts, ...d }) => d);
 
-  const content = await callDeepSeek(env, buildPrompt(goal, weekRecords, range, mapped, weekDiaries, null, reportHistory), 2000);
+  const content = await callAI(env, buildPrompt(goal, weekRecords, range, mapped, weekDiaries, null, reportHistory), 2000);
 
   /* 追加进会话历史（保留最近 12 期） */
   const history = [...fullHistory];
@@ -344,7 +390,7 @@ async function helpForAccount(env, code, state, message, history) {
     '整体要求：直接输出内容，不要解释你在做什么、不要加引号标题；总长不超过 220 字；语气像懂 ta 的朋友，温暖但不煽情。'
   ].filter(Boolean).join('\n');
 
-  const text = await callDeepSeek(env, prompt, 600);
+  const text = await callAI(env, prompt, 600);
   return { reply: text, state, cur, best: Math.floor(best / 86400000) };
 }
 

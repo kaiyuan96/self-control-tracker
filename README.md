@@ -81,11 +81,22 @@ node server.js
 
 ## 🤖 配置 AI 教练周报（可选）
 
-AI 周报需要一个 DeepSeek API Key（[platform.deepseek.com](https://platform.deepseek.com) 获取，费用极低）：
+AI 分析支持 **DeepSeek** 或 **Gemini**（两者都提供 OpenAI 兼容接口，可随时切换）：
 
-1. 将 Key 配置为运行环境的密钥变量 `DEEPSEEK_API_KEY`
+| 环境变量 | 说明 |
+|---|---|
+| `DEEPSEEK_API_KEY` | [platform.deepseek.com](https://platform.deepseek.com) 获取，费用极低 |
+| `GEMINI_API_KEY` | [aistudio.google.com](https://aistudio.google.com) 获取，有免费额度 |
+| `AI_PROVIDER` | 可选：`deepseek` / `gemini` / `auto`（默认 auto，有 Gemini key 则优先） |
+| `AI_MODEL` | 可选：覆盖默认模型名 |
+
+1. 在运行环境配置上述密钥
 2. 部署 `ai-report/` 目录下的 Worker（**无定时任务**，仅提供手动分析接口）
 3. 用户在应用内点击「让 AI 分析」才会生成；分析区间自动取"距上次分析以来"
+
+主用 provider 调用失败时会自动降级到另一家（若也配了 key）。
+
+> ⚠️ **隐私提醒**：Gemini API 的**免费额度**属于 Google 的 "Unpaid Services"，其条款说明会用你的数据改进产品，并明确要求不要提交敏感/个人信息。本项目记录的内容高度敏感，若在意这一点，建议使用**付费档**或改用其他服务商。
 
 不配置也完全不影响其他功能。
 
