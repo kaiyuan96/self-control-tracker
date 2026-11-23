@@ -13,4 +13,10 @@ Thumbs.db
 # 部署配置（本地保留，不公开）
 wrangler.toml
 worker/
+
+# 本地临时分析脚本（含访问码，绝不提交）
 analyze-now.js
+eval-now.js
+analyze-weekend.js
+report-3months.js
+acl-recovery/
